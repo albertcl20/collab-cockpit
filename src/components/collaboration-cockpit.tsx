@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Energy = "deep" | "light" | "stuck";
 type Status = "active" | "watch" | "blocked" | "done";
 type UpdateType = "from-david" | "from-albert" | "decision" | "risk";
+type BriefMode = "async-update" | "weekly-review" | "unblock-plan";
 
 type Workstream = {
   id: string;
@@ -46,7 +47,13 @@ type AppState = {
   decisions: Decision[];
 };
 
-const STORAGE_KEY = "collab-cockpit-v1";
+type Insight = {
+  title: string;
+  detail: string;
+  tone: "rose" | "amber" | "blue" | "emerald";
+};
+
+const STORAGE_KEY = "collab-cockpit-v2";
 
 const initialState: AppState = {
   workstreams: [
@@ -60,9 +67,9 @@ const initialState: AppState = {
       urgency: 8,
       confidence: 8,
       lastTouched: isoDaysAgo(0),
-      nextStep: "Use the handoff brief to agree on top 3 priorities for the week.",
+      nextStep: "Use the async brief to lock the top 3 priorities for the week.",
       blocker: "",
-      notes: "Keep this brutally short. The app should make alignment faster, not heavier.",
+      notes: "Keep this brutally short. Alignment should remove drag, not create a new ritual tax.",
     },
     {
       id: cryptoId(),
@@ -74,9 +81,9 @@ const initialState: AppState = {
       urgency: 7,
       confidence: 6,
       lastTouched: isoDaysAgo(2),
-      nextStep: "Clarify the riskiest assumption before adding more scope.",
+      nextStep: "Name the riskiest assumption and decide what evidence would change the plan.",
       blocker: "Tradeoffs are scattered across chats and docs.",
-      notes: "This is exactly the kind of work that benefits from cleaner async handoffs.",
+      notes: "Needs clear decision hygiene, not more opinions.",
     },
     {
       id: cryptoId(),
@@ -88,9 +95,9 @@ const initialState: AppState = {
       urgency: 6,
       confidence: 5,
       lastTouched: isoDaysAgo(5),
-      nextStep: "Pressure-test one idea with evidence instead of collecting 12 shallow ones.",
-      blocker: "Needs better decision hygiene and clearer kill criteria.",
-      notes: "Good ideas die from fuzziness more often than lack of effort.",
+      nextStep: "Pressure-test one idea with real evidence instead of collecting twelve vague maybes.",
+      blocker: "Kill criteria are fuzzy, so weak ideas live too long.",
+      notes: "Good ideas usually die from ambiguity before they die from competition.",
     },
   ],
   updates: [
@@ -98,7 +105,7 @@ const initialState: AppState = {
       id: cryptoId(),
       title: "Need sharper async context",
       type: "from-david",
-      detail: "Status updates should answer: what changed, what matters, what is blocked, and what happens next.",
+      detail: "Updates should answer what changed, why it matters, what is blocked, and the exact next move.",
       createdAt: isoDaysAgo(0),
       relatedWorkstream: "Weekly alignment with Albert",
     },
@@ -106,7 +113,7 @@ const initialState: AppState = {
       id: cryptoId(),
       title: "Decision drift detected",
       type: "risk",
-      detail: "Two important workstreams have not been touched in more than 48 hours and still have ambiguous next actions.",
+      detail: "Two important workstreams have gone stale and still have ambiguous next actions.",
       createdAt: isoDaysAgo(0),
       relatedWorkstream: "Micro-SaaS opportunity pipeline",
     },
@@ -115,8 +122,8 @@ const initialState: AppState = {
     {
       id: cryptoId(),
       topic: "How should David and Albert collaborate asynchronously?",
-      options: "1) long chat threads  2) scattered notes  3) single collaboration cockpit",
-      recommendation: "Use one lightweight cockpit with smart prioritization, handoff briefs, and explicit blockers.",
+      options: "1) long chat threads  2) scattered notes  3) single cockpit with scoring and crisp handoffs",
+      recommendation: "Use one lightweight cockpit with clear priorities, explicit blockers, and reusable briefs.",
       confidence: 8,
       deadline: isoDaysAgo(-2),
       impactArea: "Execution quality",
@@ -138,12 +145,33 @@ const typeTone: Record<UpdateType, string> = {
   risk: "bg-rose-50 text-rose-700 border-rose-200",
 };
 
+const insightTone: Record<Insight["tone"], string> = {
+  rose: "border-rose-200 bg-rose-50 text-rose-800",
+  amber: "border-amber-200 bg-amber-50 text-amber-800",
+  blue: "border-blue-200 bg-blue-50 text-blue-800",
+  emerald: "border-emerald-200 bg-emerald-50 text-emerald-800",
+};
+
 export function CollaborationCockpit() {
   const bootState = getBootState();
   const [state, setState] = useState<AppState>(bootState);
   const [selectedId, setSelectedId] = useState<string>(bootState.workstreams[0]?.id ?? "");
-  const [newUpdate, setNewUpdate] = useState({ title: "", detail: "", relatedWorkstream: bootState.workstreams[0]?.name ?? "", type: "from-albert" as UpdateType });
-  const [newDecision, setNewDecision] = useState({ topic: "", options: "", recommendation: "", confidence: 7, deadline: todayIso(), impactArea: "" });
+  const [briefMode, setBriefMode] = useState<BriefMode>("async-update");
+  const [newUpdate, setNewUpdate] = useState({
+    title: "",
+    detail: "",
+    relatedWorkstream: bootState.workstreams[0]?.name ?? "",
+    type: "from-albert" as UpdateType,
+  });
+  const [newDecision, setNewDecision] = useState({
+    topic: "",
+    options: "",
+    recommendation: "",
+    confidence: 7,
+    deadline: todayIso(),
+    impactArea: "",
+  });
+  const importRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -155,6 +183,7 @@ export function CollaborationCockpit() {
         ...item,
         score: priorityScore(item),
         ageDays: daysSince(item.lastTouched),
+        readiness: readinessScore(item),
       }))
       .sort((a, b) => b.score - a.score);
   }, [state.workstreams]);
@@ -166,32 +195,19 @@ export function CollaborationCockpit() {
   const avgConfidence = Math.round(
     state.workstreams.reduce((sum, item) => sum + item.confidence, 0) / Math.max(state.workstreams.length, 1)
   );
+  const overdueDecisions = state.decisions.filter((item) => new Date(item.deadline).getTime() < Date.now()).length;
+
+  const insights = useMemo<Insight[]>(() => buildInsights(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
 
   const handoffBrief = useMemo(() => {
-    const topThree = scoredWorkstreams.slice(0, 3);
-    const decisionsSoon = state.decisions
-      .slice()
-      .sort((a, b) => a.deadline.localeCompare(b.deadline))
-      .slice(0, 2);
-
-    const lines = [
-      `Top focus: ${focusNow?.name ?? "Nothing selected yet"}`,
-      focusNow ? `Why now: ${whyNow(focusNow)}` : "Why now: Add a workstream to start.",
-      "",
-      "Priority stack:",
-      ...topThree.map((item, index) => `${index + 1}. ${item.name} — ${item.nextStep}`),
-      "",
-      "Open blockers:",
-      ...state.workstreams
-        .filter((item) => item.blocker.trim())
-        .map((item) => `- ${item.name}: ${item.blocker}`),
-      state.workstreams.some((item) => item.blocker.trim()) ? "" : "- None right now. Suspicious, but nice if true.",
-      "Decisions that need attention:",
-      ...decisionsSoon.map((item) => `- ${item.topic} by ${prettyDate(item.deadline)} → ${item.recommendation}`),
-    ];
-
-    return lines.join("\n");
-  }, [focusNow, scoredWorkstreams, state.decisions, state.workstreams]);
+    return buildBrief({
+      mode: briefMode,
+      focusNow,
+      workstreams: scoredWorkstreams,
+      decisions: state.decisions,
+      updates: state.updates,
+    });
+  }, [briefMode, focusNow, scoredWorkstreams, state.decisions, state.updates]);
 
   function updateWorkstream(id: string, patch: Partial<Workstream>) {
     setState((current) => ({
@@ -200,6 +216,36 @@ export function CollaborationCockpit() {
         item.id === id ? { ...item, ...patch, lastTouched: patch.lastTouched ?? todayIso() } : item
       ),
     }));
+  }
+
+  function addWorkstream() {
+    const item: Workstream = {
+      id: cryptoId(),
+      name: "New workstream",
+      owner: "Shared",
+      status: "watch",
+      energy: "light",
+      impact: 6,
+      urgency: 5,
+      confidence: 6,
+      lastTouched: todayIso(),
+      nextStep: "Write the next concrete action.",
+      blocker: "",
+      notes: "",
+    };
+
+    setState((current) => ({ ...current, workstreams: [item, ...current.workstreams] }));
+    setSelectedId(item.id);
+  }
+
+  function deleteWorkstream(id: string) {
+    setState((current) => {
+      const nextWorkstreams = current.workstreams.filter((item) => item.id !== id);
+      return { ...current, workstreams: nextWorkstreams };
+    });
+
+    const fallback = state.workstreams.find((item) => item.id !== id);
+    setSelectedId(fallback?.id ?? "");
   }
 
   function addUpdate() {
@@ -212,13 +258,18 @@ export function CollaborationCockpit() {
           title: newUpdate.title.trim(),
           detail: newUpdate.detail.trim(),
           createdAt: todayIso(),
-          relatedWorkstream: newUpdate.relatedWorkstream,
+          relatedWorkstream: newUpdate.relatedWorkstream.trim() || "General",
           type: newUpdate.type,
         },
         ...current.updates,
       ],
     }));
-    setNewUpdate({ title: "", detail: "", relatedWorkstream: state.workstreams[0]?.name ?? "", type: "from-albert" });
+    setNewUpdate({
+      title: "",
+      detail: "",
+      relatedWorkstream: state.workstreams[0]?.name ?? "",
+      type: "from-albert",
+    });
   }
 
   function addDecision() {
@@ -231,7 +282,7 @@ export function CollaborationCockpit() {
           topic: newDecision.topic.trim(),
           options: newDecision.options.trim(),
           recommendation: newDecision.recommendation.trim(),
-          confidence: newDecision.confidence,
+          confidence: clamp(newDecision.confidence, 1, 10),
           deadline: newDecision.deadline,
           impactArea: newDecision.impactArea.trim() || "General",
         },
@@ -247,6 +298,49 @@ export function CollaborationCockpit() {
     setSelectedId(initialState.workstreams[0]?.id ?? "");
   }
 
+  async function copyBrief() {
+    await navigator.clipboard.writeText(handoffBrief);
+  }
+
+  async function copyExport() {
+    await navigator.clipboard.writeText(JSON.stringify(state, null, 2));
+  }
+
+  function exportJson() {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `collab-cockpit-${todayIso()}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function triggerImport() {
+    importRef.current?.click();
+  }
+
+  function importJson(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result)) as AppState;
+        if (!Array.isArray(parsed.workstreams) || !Array.isArray(parsed.updates) || !Array.isArray(parsed.decisions)) {
+          throw new Error("bad shape");
+        }
+        setState(parsed);
+        setSelectedId(parsed.workstreams[0]?.id ?? "");
+      } catch {
+        window.alert("That file is not valid Collab Cockpit JSON.");
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = "";
+  }
+
   return (
     <main className="min-h-screen bg-[#f6f4ef] text-slate-900">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -260,20 +354,48 @@ export function CollaborationCockpit() {
                 A calmer place for David and Albert to stay aligned.
               </h1>
               <p className="max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
-                This tool turns messy async work into a clear focus stack: what matters, what is blocked, what needs a decision, and what the exact next move is.
+                Track workstreams, spot hidden collaboration drag, and generate crisp handoff briefs without turning the process into a second job.
               </p>
             </div>
-            <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[420px]">
-              <MetricCard label="Focus score leader" value={focusNow ? String(focusNow.score) : "—"} note={focusNow?.name ?? "No workstreams yet"} />
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 lg:min-w-[520px]">
+              <MetricCard label="Top focus" value={focusNow ? String(focusNow.score) : "—"} note={focusNow?.name ?? "No workstreams yet"} />
               <MetricCard label="Blocked items" value={String(blockedCount)} note={blockedCount ? "Needs unblocking" : "Clean board"} />
               <MetricCard label="Confidence" value={`${avgConfidence}%`} note={staleCount ? `${staleCount} stale item(s)` : "Fresh enough"} />
+              <MetricCard label="Decision pressure" value={String(overdueDecisions)} note={overdueDecisions ? "Overdue decisions" : "Under control"} />
             </div>
           </div>
         </section>
 
         <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
           <div className="space-y-6">
-            <Panel title="Priority stack" subtitle="Smart scoring favors high-impact, urgent, low-confidence, stale, and blocked work.">
+            <Panel title="Friction radar" subtitle="The app calls out collaboration mess before it compounds.">
+              <div className="grid gap-3 md:grid-cols-2">
+                {insights.map((insight) => (
+                  <div key={insight.title} className={`rounded-2xl border p-4 ${insightTone[insight.tone]}`}>
+                    <div className="text-sm font-semibold">{insight.title}</div>
+                    <p className="mt-1 text-sm leading-6 opacity-90">{insight.detail}</p>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+
+            <Panel title="Priority stack" subtitle="Scoring favors high-impact, urgent, stale, blocked, and low-confidence work.">
+              <div className="mb-4 flex flex-wrap gap-3">
+                <button type="button" onClick={addWorkstream} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                  Add workstream
+                </button>
+                <button type="button" onClick={exportJson} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                  Export JSON
+                </button>
+                <button type="button" onClick={copyExport} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                  Copy JSON
+                </button>
+                <button type="button" onClick={triggerImport} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                  Import JSON
+                </button>
+                <input ref={importRef} type="file" accept="application/json" onChange={importJson} className="hidden" />
+              </div>
+
               <div className="grid gap-3">
                 {scoredWorkstreams.map((item, index) => (
                   <button
@@ -289,27 +411,38 @@ export function CollaborationCockpit() {
                           <h3 className="text-base font-semibold">{item.name}</h3>
                         </div>
                         <p className="text-sm text-slate-600">{item.nextStep}</p>
+                        <p className="text-xs text-slate-500">{readinessLabel(item.readiness)}</p>
                       </div>
-                      <div className="flex flex-wrap gap-2 sm:max-w-[240px] sm:justify-end">
+                      <div className="flex flex-wrap gap-2 sm:max-w-[280px] sm:justify-end">
                         <Badge>{item.score} pts</Badge>
+                        <Badge>{item.readiness}% ready</Badge>
                         <Badge tone={statusTone[item.status]}>{item.status}</Badge>
                         <Badge>{item.owner}</Badge>
                       </div>
                     </div>
-                    <div className="mt-4 grid gap-2 text-xs text-slate-500 sm:grid-cols-4">
+                    <div className="mt-4 grid gap-2 text-xs text-slate-500 sm:grid-cols-5">
                       <MiniStat label="Impact" value={String(item.impact)} />
                       <MiniStat label="Urgency" value={String(item.urgency)} />
                       <MiniStat label="Confidence" value={String(item.confidence)} />
                       <MiniStat label="Age" value={`${item.ageDays}d`} />
+                      <MiniStat label="Energy" value={item.energy} />
                     </div>
                   </button>
                 ))}
               </div>
             </Panel>
 
-            <Panel title="Workstream editor" subtitle="Keep the exact next step painfully obvious.">
+            <Panel title="Workstream editor" subtitle="Keep the next step obvious and the blocker honest.">
               {selected ? (
                 <div className="grid gap-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    <div>
+                      Focus score <span className="font-semibold text-slate-900">{priorityScore(selected)}</span> · readiness <span className="font-semibold text-slate-900">{readinessScore(selected)}%</span>
+                    </div>
+                    <button type="button" onClick={() => deleteWorkstream(selected.id)} className="rounded-xl border border-rose-200 px-3 py-2 font-medium text-rose-700 transition hover:bg-rose-50">
+                      Delete workstream
+                    </button>
+                  </div>
                   <div className="grid gap-4 md:grid-cols-2">
                     <Field label="Workstream name">
                       <input className={inputClass} value={selected.name} onChange={(e) => updateWorkstream(selected.id, { name: e.target.value })} />
@@ -362,69 +495,47 @@ export function CollaborationCockpit() {
           </div>
 
           <div className="space-y-6">
-            <Panel title="Async handoff brief" subtitle="Copy this into chat, notes, or your own brain.">
-              <textarea readOnly className={`${inputClass} min-h-[280px] font-mono text-sm`} value={handoffBrief} />
+            <Panel title="Brief composer" subtitle="Three useful formats. No fluffy status novels.">
+              <div className="mb-4 flex flex-wrap gap-2">
+                <ModePill active={briefMode === "async-update"} onClick={() => setBriefMode("async-update")}>Async update</ModePill>
+                <ModePill active={briefMode === "weekly-review"} onClick={() => setBriefMode("weekly-review")}>Weekly review</ModePill>
+                <ModePill active={briefMode === "unblock-plan"} onClick={() => setBriefMode("unblock-plan")}>Unblock plan</ModePill>
+              </div>
+              <textarea readOnly className={`${inputClass} min-h-[320px] font-mono text-sm`} value={handoffBrief} />
               <div className="mt-3 flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={() => navigator.clipboard.writeText(handoffBrief)}
-                  className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
-                >
+                <button type="button" onClick={copyBrief} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
                   Copy brief
                 </button>
-                <button
-                  type="button"
-                  onClick={seedDemo}
-                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                >
+                <button type="button" onClick={seedDemo} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
                   Reset demo data
                 </button>
               </div>
             </Panel>
 
-            <Panel title="Add async update" subtitle="Capture what changed without writing a novel.">
-              <div className="grid gap-3">
-                <Field label="Title">
-                  <input className={inputClass} value={newUpdate.title} onChange={(e) => setNewUpdate((current) => ({ ...current, title: e.target.value }))} placeholder="Shipped dashboard cleanup" />
-                </Field>
-                <Field label="Type">
-                  <select className={inputClass} value={newUpdate.type} onChange={(e) => setNewUpdate((current) => ({ ...current, type: e.target.value as UpdateType }))}>
-                    <option value="from-albert">from Albert</option>
-                    <option value="from-david">from David</option>
-                    <option value="decision">decision</option>
-                    <option value="risk">risk</option>
-                  </select>
-                </Field>
-                <Field label="Related workstream">
-                  <input className={inputClass} value={newUpdate.relatedWorkstream} onChange={(e) => setNewUpdate((current) => ({ ...current, relatedWorkstream: e.target.value }))} />
-                </Field>
-                <Field label="Detail">
-                  <textarea className={`${inputClass} min-h-24`} value={newUpdate.detail} onChange={(e) => setNewUpdate((current) => ({ ...current, detail: e.target.value }))} placeholder="What changed, what matters, what needs attention next." />
-                </Field>
-                <button type="button" onClick={addUpdate} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
-                  Save update
-                </button>
-              </div>
-            </Panel>
-
-            <Panel title="Decision log" subtitle="Because fuzzy thinking is expensive.">
+            <Panel title="Decision log" subtitle="Because vague thinking gets expensive fast.">
               <div className="space-y-3">
-                {state.decisions.map((decision) => (
-                  <div key={decision.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="font-semibold">{decision.topic}</h3>
-                        <p className="mt-1 text-sm text-slate-600">{decision.recommendation}</p>
+                {state.decisions.map((decision) => {
+                  const overdue = new Date(decision.deadline).getTime() < Date.now();
+                  return (
+                    <div key={decision.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="font-semibold">{decision.topic}</h3>
+                          <p className="mt-1 text-sm text-slate-600">{decision.recommendation}</p>
+                        </div>
+                        <div className="flex flex-col items-end gap-2">
+                          <Badge>{decision.confidence}/10</Badge>
+                          {overdue ? <Badge tone="border-rose-200 bg-rose-50 text-rose-700">overdue</Badge> : null}
+                        </div>
                       </div>
-                      <Badge>{decision.confidence}/10</Badge>
+                      <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
+                        <div>Deadline: {prettyDate(decision.deadline)}</div>
+                        <div>Impact: {decision.impactArea}</div>
+                        <div className="sm:col-span-2">Options: {decision.options || "Not written down yet."}</div>
+                      </div>
                     </div>
-                    <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
-                      <div>Deadline: {prettyDate(decision.deadline)}</div>
-                      <div>Impact: {decision.impactArea}</div>
-                      <div className="sm:col-span-2">Options: {decision.options || "Not written down yet."}</div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <div className="mt-4 grid gap-3 border-t border-slate-200 pt-4">
                 <Field label="Topic">
@@ -449,6 +560,33 @@ export function CollaborationCockpit() {
                 </div>
                 <button type="button" onClick={addDecision} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
                   Save decision
+                </button>
+              </div>
+            </Panel>
+
+            <Panel title="Add async update" subtitle="Capture what changed without writing a novel.">
+              <div className="grid gap-3">
+                <Field label="Title">
+                  <input className={inputClass} value={newUpdate.title} onChange={(e) => setNewUpdate((current) => ({ ...current, title: e.target.value }))} placeholder="Shipped dashboard cleanup" />
+                </Field>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Type">
+                    <select className={inputClass} value={newUpdate.type} onChange={(e) => setNewUpdate((current) => ({ ...current, type: e.target.value as UpdateType }))}>
+                      <option value="from-albert">from Albert</option>
+                      <option value="from-david">from David</option>
+                      <option value="decision">decision</option>
+                      <option value="risk">risk</option>
+                    </select>
+                  </Field>
+                  <Field label="Related workstream">
+                    <input className={inputClass} value={newUpdate.relatedWorkstream} onChange={(e) => setNewUpdate((current) => ({ ...current, relatedWorkstream: e.target.value }))} />
+                  </Field>
+                </div>
+                <Field label="Detail">
+                  <textarea className={`${inputClass} min-h-24`} value={newUpdate.detail} onChange={(e) => setNewUpdate((current) => ({ ...current, detail: e.target.value }))} placeholder="What changed, why it matters, blocker if any, and exact next step." />
+                </Field>
+                <button type="button" onClick={addUpdate} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                  Save update
                 </button>
               </div>
             </Panel>
@@ -487,6 +625,18 @@ function Panel({ title, subtitle, children }: { title: string; subtitle: string;
       </div>
       {children}
     </section>
+  );
+}
+
+function ModePill({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full border px-3 py-2 text-sm font-medium transition ${active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -536,7 +686,161 @@ function priorityScore(item: Workstream) {
   const blockedBonus = item.status === "blocked" ? 10 : item.status === "watch" ? 4 : 0;
   const confidencePenalty = 10 - item.confidence;
   const energyModifier = item.energy === "stuck" ? 5 : item.energy === "deep" ? 2 : 0;
-  return item.impact * 3 + item.urgency * 2 + confidencePenalty + age * 2 + blockedBonus + energyModifier;
+  const nextStepPenalty = item.nextStep.trim().length < 24 ? 4 : 0;
+  return item.impact * 3 + item.urgency * 2 + confidencePenalty + age * 2 + blockedBonus + energyModifier + nextStepPenalty;
+}
+
+function readinessScore(item: Workstream) {
+  let score = 100;
+  if (!item.nextStep.trim()) score -= 30;
+  else if (item.nextStep.trim().length < 24) score -= 15;
+  if (item.status === "blocked") score -= 25;
+  if (item.blocker.trim() && item.status !== "blocked") score -= 8;
+  if (daysSince(item.lastTouched) >= 3) score -= 15;
+  if (item.confidence <= 4) score -= 15;
+  if (item.energy === "stuck") score -= 12;
+  return clamp(score, 12, 100);
+}
+
+function readinessLabel(readiness: number) {
+  if (readiness >= 80) return "Ready to move. Low coordination drag.";
+  if (readiness >= 60) return "Usable, but cleanup would make the handoff sharper.";
+  if (readiness >= 40) return "Friction is building. Clarify next step or blocker.";
+  return "Messy. This will waste time unless cleaned up first.";
+}
+
+function buildInsights(
+  workstreams: Array<Workstream & { score: number; ageDays: number; readiness: number }>,
+  decisions: Decision[]
+): Insight[] {
+  const staleCritical = workstreams.find((item) => item.ageDays >= 3 && item.impact >= 8);
+  const unclearNextStep = workstreams.find((item) => item.nextStep.trim().length < 24);
+  const blocked = workstreams.find((item) => item.status === "blocked");
+  const overdueDecision = decisions
+    .slice()
+    .sort((a, b) => a.deadline.localeCompare(b.deadline))
+    .find((item) => new Date(item.deadline).getTime() < Date.now());
+
+  return [
+    staleCritical
+      ? {
+          title: "Stale high-impact work",
+          detail: `${staleCritical.name} has gone ${staleCritical.ageDays} days without touch. That's how important work quietly rots.`,
+          tone: "rose",
+        }
+      : {
+          title: "Fresh enough",
+          detail: "No high-impact workstreams are quietly decaying right now. Nice rare event.",
+          tone: "emerald",
+        },
+    blocked
+      ? {
+          title: "Blocked focus",
+          detail: `${blocked.name} is blocked. If the blocker is real, plan the unblock. If not, the status is lying.`,
+          tone: "amber",
+        }
+      : {
+          title: "No hard blockers",
+          detail: "Nothing is officially blocked. Either the board is healthy or somebody is being optimistic.",
+          tone: "blue",
+        },
+    unclearNextStep
+      ? {
+          title: "Ambiguous next action",
+          detail: `${unclearNextStep.name} still lacks a sharp next step. Ambiguity is collaboration debt with better branding.`,
+          tone: "amber",
+        }
+      : {
+          title: "Next steps are explicit",
+          detail: "Every workstream has a concrete-enough next step. That's already better than most teams manage.",
+          tone: "emerald",
+        },
+    overdueDecision
+      ? {
+          title: "Decision drift",
+          detail: `${overdueDecision.topic} is overdue since ${prettyDate(overdueDecision.deadline)}. The cost is usually hidden until it isn't.`,
+          tone: "rose",
+        }
+      : {
+          title: "Decision hygiene ok",
+          detail: "No logged decisions are overdue. Future-you says thanks.",
+          tone: "blue",
+        },
+  ];
+}
+
+function buildBrief({
+  mode,
+  focusNow,
+  workstreams,
+  decisions,
+  updates,
+}: {
+  mode: BriefMode;
+  focusNow?: (Workstream & { score: number; ageDays: number; readiness: number }) | undefined;
+  workstreams: Array<Workstream & { score: number; ageDays: number; readiness: number }>;
+  decisions: Decision[];
+  updates: Update[];
+}) {
+  const topThree = workstreams.slice(0, 3);
+  const blockers = workstreams.filter((item) => item.blocker.trim());
+  const overdueDecisions = decisions.filter((item) => new Date(item.deadline).getTime() < Date.now());
+  const recentUpdates = updates.slice(0, 3);
+
+  if (mode === "weekly-review") {
+    return [
+      "WEEKLY REVIEW",
+      "",
+      `Top focus next: ${focusNow?.name ?? "Nothing selected yet"}`,
+      focusNow ? `Why this is first: ${whyNow(focusNow)}` : "Why this is first: Add a workstream.",
+      "",
+      "What moved:",
+      ...recentUpdates.map((item) => `- ${item.title}: ${item.detail}`),
+      recentUpdates.length ? "" : "- No recent updates logged. Suspicious.",
+      "Priority stack:",
+      ...topThree.map((item, index) => `${index + 1}. ${item.name} — next ${item.nextStep}`),
+      "",
+      "Blockers to resolve:",
+      ...blockers.map((item) => `- ${item.name}: ${item.blocker}`),
+      blockers.length ? "" : "- None logged.",
+      "Decisions to make:",
+      ...decisions.slice(0, 3).map((item) => `- ${item.topic} by ${prettyDate(item.deadline)} → ${item.recommendation}`),
+    ].join("\n");
+  }
+
+  if (mode === "unblock-plan") {
+    const blocked = workstreams.filter((item) => item.status === "blocked");
+    return [
+      "UNBLOCK PLAN",
+      "",
+      blocked.length ? `Blocked workstreams: ${blocked.length}` : "Blocked workstreams: 0",
+      ...blocked.map((item, index) => `${index + 1}. ${item.name}\n   blocker: ${item.blocker || "Not written clearly enough yet."}\n   next move: ${item.nextStep}\n   owner: ${item.owner}`),
+      blocked.length ? "" : "No blocked workstreams. Either nice, or the board is lying.",
+      "Support decisions:",
+      ...overdueDecisions.map((item) => `- ${item.topic} is overdue since ${prettyDate(item.deadline)}`),
+      overdueDecisions.length ? "" : "- No overdue decisions.",
+      focusNow ? `Fallback focus if blockers wait: ${focusNow.name}` : "Fallback focus if blockers wait: none selected",
+    ].join("\n");
+  }
+
+  return [
+    "ASYNC UPDATE",
+    "",
+    `Top focus: ${focusNow?.name ?? "Nothing selected yet"}`,
+    focusNow ? `Why now: ${whyNow(focusNow)}` : "Why now: Add a workstream to start.",
+    "",
+    "What matters now:",
+    ...topThree.map((item, index) => `${index + 1}. ${item.name} — ${item.nextStep}`),
+    "",
+    "Open blockers:",
+    ...blockers.map((item) => `- ${item.name}: ${item.blocker}`),
+    blockers.length ? "" : "- None right now.",
+    "Recent movement:",
+    ...recentUpdates.map((item) => `- ${item.title}: ${item.detail}`),
+    recentUpdates.length ? "" : "- No recent updates logged.",
+    "Decisions needing attention:",
+    ...decisions.slice(0, 2).map((item) => `- ${item.topic} by ${prettyDate(item.deadline)} → ${item.recommendation}`),
+  ].join("\n");
 }
 
 function whyNow(item: Workstream & { score?: number; ageDays?: number }) {
@@ -545,6 +849,7 @@ function whyNow(item: Workstream & { score?: number; ageDays?: number }) {
   if (item.urgency >= 8) reasons.push("urgency is high");
   if (item.confidence <= 6) reasons.push("confidence is still shaky");
   if ((item.ageDays ?? daysSince(item.lastTouched)) >= 3) reasons.push("it has gone stale");
+  if (item.nextStep.trim().length < 24) reasons.push("the next step is still too fuzzy");
   if (!reasons.length) reasons.push("it has the best combined impact-to-chaos ratio");
   return `${item.name} is on top because ${reasons.join(", ")}.`;
 }
@@ -573,10 +878,14 @@ function cryptoId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function getBootState() {
   if (typeof window === "undefined") return initialState;
 
-  const stored = window.localStorage.getItem(STORAGE_KEY);
+  const stored = window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem("collab-cockpit-v1");
   if (!stored) return initialState;
 
   try {
