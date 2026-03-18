@@ -14,12 +14,12 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const password = process.env.APP_PASSWORD;
+  const password = process.env.APP_PASSWORD?.trim();
   if (!password) {
     return NextResponse.next();
   }
 
-  const cookie = request.cookies.get(COOKIE_NAME)?.value;
+  const cookie = request.cookies.get(COOKIE_NAME)?.value?.trim();
   if (cookie === password) {
     return NextResponse.next();
   }

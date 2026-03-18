@@ -4,13 +4,13 @@ const COOKIE_NAME = "collab-cockpit-auth";
 
 export async function POST(request: NextRequest) {
   const { password } = (await request.json()) as { password?: string };
-  const expected = process.env.APP_PASSWORD;
+  const expected = process.env.APP_PASSWORD?.trim();
 
   if (!expected) {
     return NextResponse.json({ ok: true, mode: "unprotected" });
   }
 
-  if (!password || password !== expected) {
+  if (!password || password.trim() !== expected) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
 
