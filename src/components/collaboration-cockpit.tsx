@@ -6,6 +6,7 @@ type Energy = "deep" | "light" | "stuck";
 type Status = "active" | "watch" | "blocked" | "done";
 type UpdateType = "from-david" | "from-albert" | "decision" | "risk";
 type BriefMode = "async-update" | "weekly-review" | "unblock-plan" | "alignment-agenda";
+type CoachMode = "quick-sync" | "deep-work" | "async-handoff";
 
 type Workstream = {
   id: string;
@@ -74,8 +75,22 @@ type Insight = {
   tone: "rose" | "amber" | "blue" | "emerald";
 };
 
-const STORAGE_KEY = "collab-cockpit-v3";
-const LEGACY_KEYS = ["collab-cockpit-v2", "collab-cockpit-v1"];
+type CoachCard = {
+  title: string;
+  detail: string;
+  tone: "rose" | "amber" | "blue" | "emerald";
+};
+
+type CoachPlan = {
+  mode: CoachMode;
+  headline: string;
+  cards: CoachCard[];
+  davidMessage: string;
+  albertPlan: string;
+};
+
+const STORAGE_KEY = "collab-cockpit-v4";
+const LEGACY_KEYS = ["collab-cockpit-v3", "collab-cockpit-v2", "collab-cockpit-v1"];
 
 const initialState: AppState = {
   workstreams: [
@@ -189,6 +204,7 @@ export function CollaborationCockpit() {
   const [state, setState] = useState<AppState>(bootState);
   const [selectedId, setSelectedId] = useState<string>(bootState.workstreams[0]?.id ?? "");
   const [briefMode, setBriefMode] = useState<BriefMode>("alignment-agenda");
+  const [coachMode, setCoachMode] = useState<CoachMode>("quick-sync");
   const [snapshotNote, setSnapshotNote] = useState("");
   const [copyState, setCopyState] = useState<string>("");
   const [newUpdate, setNewUpdate] = useState({
@@ -241,6 +257,10 @@ export function CollaborationCockpit() {
   const agenda = buildAgenda(scoredWorkstreams, state.decisions);
   const sevenDayPlan = buildSevenDayPlan(scoredWorkstreams, state.decisions);
   const insights = useMemo(() => buildInsights(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
+  const coachPlan = useMemo(
+    () => buildCoachPlan({ mode: coachMode, focusNow, selected, decisions: state.decisions, updates: state.updates }),
+    [coachMode, focusNow, selected, state.decisions, state.updates]
+  );
   const handoffBrief = useMemo(
     () =>
       buildBrief({
@@ -368,6 +388,7 @@ export function CollaborationCockpit() {
     setState(initialState);
     setSelectedId(initialState.workstreams[0]?.id ?? "");
     setBriefMode("alignment-agenda");
+    setCoachMode("quick-sync");
   }
 
   async function copyText(text: string, label: string) {
@@ -452,6 +473,45 @@ export function CollaborationCockpit() {
               </div>
             </Panel>
 
+            <Panel title="Collaboration coach" subtitle="This is the smart bit. It turns board state into direct asks, better async messages, and an execution plan for Albert.">
+              <div className="mb-4 flex flex-wrap gap-2">
+                <ModePill active={coachMode === "quick-sync"} onClick={() => setCoachMode("quick-sync")}>Quick sync</ModePill>
+                <ModePill active={coachMode === "deep-work"} onClick={() => setCoachMode("deep-work")}>Deep work</ModePill>
+                <ModePill active={coachMode === "async-handoff"} onClick={() => setCoachMode("async-handoff")}>Async handoff</ModePill>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <h3 className="text-base font-semibold text-slate-900">{coachPlan.headline}</h3>
+                <p className="mt-2 text-sm text-slate-600">
+                  Focused on <span className="font-medium text-slate-900">{selected?.name ?? focusNow?.name ?? "the top workstream"}</span>. The coach changes tone depending on whether the next move is a quick sync, real thinking time, or an async handoff.
+                </p>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {coachPlan.cards.map((card) => (
+                  <div key={card.title} className={`rounded-2xl border p-4 ${insightTone[card.tone]}`}>
+                    <div className="text-sm font-semibold">{card.title}</div>
+                    <p className="mt-1 text-sm leading-6 opacity-90">{card.detail}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                <Field label="Message David can send or react to now">
+                  <textarea readOnly className={`${inputClass} min-h-44 font-mono text-sm`} value={coachPlan.davidMessage} />
+                </Field>
+                <Field label="Albert execution plan">
+                  <textarea readOnly className={`${inputClass} min-h-44 font-mono text-sm`} value={coachPlan.albertPlan} />
+                </Field>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <button type="button" onClick={() => copyText(coachPlan.davidMessage, "David note")} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                  Copy David note
+                </button>
+                <button type="button" onClick={() => copyText(coachPlan.albertPlan, "Albert plan")} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                  Copy Albert plan
+                </button>
+                {copyState ? <span className="self-center text-sm text-emerald-700">Copied {copyState}.</span> : null}
+              </div>
+            </Panel>
+
             <Panel title="Smart agenda" subtitle="This is the meeting prep bit. It turns the board into an actual conversation plan.">
               <div className="grid gap-3 md:grid-cols-2">
                 <AgendaCard title="Open with" items={agenda.openWith} />
@@ -466,7 +526,6 @@ export function CollaborationCockpit() {
                 <button type="button" onClick={() => setBriefMode("alignment-agenda")} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
                   Use agenda mode
                 </button>
-                {copyState ? <span className="self-center text-sm text-emerald-700">Copied {copyState}.</span> : null}
               </div>
             </Panel>
 
@@ -632,7 +691,7 @@ export function CollaborationCockpit() {
               </div>
             </Panel>
 
-            <Panel title="Snapshot lab" subtitle="Save quick checkpoints so you can see whether the collaboration system is actually improving.">
+            <Panel title="Snapshot trend" subtitle="Save checkpoints, then see if the collaboration system is actually getting less annoying.">
               <div className="grid gap-3">
                 <Field label="Snapshot note">
                   <input className={inputClass} value={snapshotNote} onChange={(e) => setSnapshotNote(e.target.value)} placeholder="After weekly sync" />
@@ -643,6 +702,7 @@ export function CollaborationCockpit() {
                   </button>
                   <div className="self-center text-sm text-slate-500">Latest delta: {latestSnapshot ? `${healthDelta > 0 ? "+" : ""}${healthDelta} health points` : "No baseline yet"}</div>
                 </div>
+                <TrendChart snapshots={state.snapshots} currentHealth={collaborationHealth} />
                 <div className="space-y-3">
                   {state.snapshots.length ? (
                     state.snapshots.map((snapshot) => (
@@ -848,6 +908,51 @@ function Badge({ children, tone }: { children: React.ReactNode; tone?: string })
   return <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${tone ?? "border-slate-200 bg-slate-50 text-slate-600"}`}>{children}</span>;
 }
 
+function TrendChart({ snapshots, currentHealth }: { snapshots: Snapshot[]; currentHealth: number }) {
+  const points = [...snapshots].slice(0, 6).reverse();
+  const values = [...points.map((item) => item.health), currentHealth];
+  const labels = [...points.map((item) => item.note), "Now"];
+
+  if (values.length < 2) {
+    return <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">Save a couple of snapshots and the trend will show up here.</p>;
+  }
+
+  const width = 320;
+  const height = 120;
+  const min = Math.max(0, Math.min(...values) - 8);
+  const max = Math.min(100, Math.max(...values) + 8);
+  const span = Math.max(1, max - min);
+  const path = values
+    .map((value, index) => {
+      const x = (index / Math.max(values.length - 1, 1)) * width;
+      const y = height - ((value - min) / span) * height;
+      return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3 text-sm text-slate-600">
+        <span>Collaboration health trend</span>
+        <span className="font-medium text-slate-900">{values[0]}% → {currentHealth}%</span>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-32 w-full overflow-visible">
+        <path d={path} fill="none" stroke="#0f172a" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        {values.map((value, index) => {
+          const x = (index / Math.max(values.length - 1, 1)) * width;
+          const y = height - ((value - min) / span) * height;
+          return <circle key={`${labels[index]}-${value}`} cx={x} cy={y} r="4" fill="#0f172a" />;
+        })}
+      </svg>
+      <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-3">
+        {labels.map((label, index) => (
+          <div key={`${label}-${index}`} className="truncate">{label}: {values[index]}%</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function priorityScore(item: Workstream) {
   const age = Math.min(daysSince(item.lastTouched), 7);
   const blockedBonus = item.status === "blocked" ? 12 : item.status === "watch" ? 5 : 0;
@@ -1006,6 +1111,150 @@ function buildSevenDayPlan(workstreams: ScoredWorkstream[], decisions: Decision[
       why: overdue ? `It has been overdue since ${prettyDate(overdue.deadline)}.` : "Decision drift quietly taxes execution.",
     },
   ];
+}
+
+function buildCoachPlan({
+  mode,
+  focusNow,
+  selected,
+  decisions,
+  updates,
+}: {
+  mode: CoachMode;
+  focusNow?: ScoredWorkstream;
+  selected?: Workstream;
+  decisions: Decision[];
+  updates: Update[];
+}): CoachPlan {
+  const subject = selected ? { ...selected, score: priorityScore(selected), ageDays: daysSince(selected.lastTouched), readiness: readinessScore(selected), drag: collaborationDrag(selected) } : focusNow;
+  const fallback = focusNow;
+  const overdueDecision = decisions.find((item) => isPast(item.deadline));
+  const recent = updates[0];
+
+  if (!subject) {
+    return {
+      mode,
+      headline: "Add one workstream first",
+      cards: [{ title: "Nothing to coach yet", detail: "The board is empty. Add a real workstream and the coach will stop freeloading.", tone: "amber" }],
+      davidMessage: "No workstream selected yet.",
+      albertPlan: "Create one real workstream with an owner, next step, and desired outcome.",
+    };
+  }
+
+  const missing = missingPieces(subject);
+  const cards: CoachCard[] = [
+    {
+      title: subject.status === "blocked" ? "Unblock first" : "Best next move",
+      detail: subject.status === "blocked"
+        ? `${subject.name} is blocked. Remove the blocker or switch to a fallback instead of pretending progress is happening.`
+        : `${subject.name} should move next because ${whyNow(subject)}`,
+      tone: subject.status === "blocked" ? "rose" : "blue",
+    },
+    {
+      title: "What David should answer",
+      detail: subject.waitingOn.trim()
+        ? `Answer the waiting dependency directly: ${subject.waitingOn}.`
+        : subject.decisionNeeded.trim()
+          ? `Make the decision explicit: ${subject.decisionNeeded}`
+          : `Pressure-test whether this next step is still the right one for ${subject.desiredOutcome || subject.name}.`,
+      tone: subject.waitingOn.trim() || subject.decisionNeeded.trim() ? "amber" : "emerald",
+    },
+    {
+      title: "Missing info",
+      detail: missing.length ? missing.join(" · ") : "The workstream is reasonably specified. Miracles do happen.",
+      tone: missing.length ? "amber" : "emerald",
+    },
+    {
+      title: "Fallback path",
+      detail: fallback && fallback.id !== subject.id ? `If ${subject.name} stalls, switch to ${fallback.name}.` : "No better fallback exists yet. Clean this one up instead.",
+      tone: "blue",
+    },
+  ];
+
+  if (mode === "deep-work") {
+    return {
+      mode,
+      headline: `Deep-work plan for ${subject.name}`,
+      cards,
+      davidMessage: [
+        `DEEP WORK CHECK-IN`,
+        "",
+        `Focus: ${subject.name}`,
+        `Desired outcome: ${subject.desiredOutcome || "Needs to be written down."}`,
+        `Decision needed: ${subject.decisionNeeded || "No explicit decision logged yet."}`,
+        `What I need from David: ${subject.waitingOn || subject.decisionNeeded || "A quick sanity check on whether the current approach is still right."}`,
+        `Why this matters: impact ${subject.impact}/10, urgency ${subject.urgency}/10, readiness ${subject.readiness}%.`,
+      ].join("\n"),
+      albertPlan: [
+        `ALBERT EXECUTION PLAN`,
+        "",
+        `1. Work only on ${subject.name}.`,
+        `2. Produce something decision-ready, not just exploratory.` ,
+        `3. Close these gaps first: ${missing.length ? missing.join(", ") : "none obvious"}.`,
+        `4. If blocked, ask exactly one crisp question: ${subject.waitingOn || subject.decisionNeeded || "What would change the plan?"}`,
+        `5. End with a concrete artifact and the next irreversible move.`,
+      ].join("\n"),
+    };
+  }
+
+  if (mode === "async-handoff") {
+    return {
+      mode,
+      headline: `Async handoff for ${subject.name}`,
+      cards,
+      davidMessage: [
+        `ASYNC HANDOFF`,
+        "",
+        `What changed: ${recent?.title || subject.name}`,
+        `Why it matters: ${recent?.detail || subject.nextStep}`,
+        `Blocked by: ${subject.blocker || "No blocker currently logged."}`,
+        `Need from David: ${subject.waitingOn || subject.decisionNeeded || "Confirm the current priority order."}`,
+        `Exact next move: ${subject.nextStep}`,
+      ].join("\n"),
+      albertPlan: [
+        `ASYNC EXECUTION NOTE`,
+        "",
+        `Workstream: ${subject.name}`,
+        `Message should stay short and answer changed / matters / blocked / next.`,
+        `Do not send a long essay.`,
+        `If David replies, convert it into either a clearer next step or a logged decision immediately.`,
+      ].join("\n"),
+    };
+  }
+
+  return {
+    mode,
+    headline: `Quick sync prep for ${subject.name}`,
+    cards,
+    davidMessage: [
+      `QUICK SYNC`,
+      "",
+      `Top item: ${subject.name}`,
+      `What needs agreement: ${subject.decisionNeeded || subject.waitingOn || "Whether the current next step is still the right one."}`,
+      `Current blocker: ${subject.blocker || "No blocker logged."}`,
+      `Next step if we agree: ${subject.nextStep}`,
+      overdueDecision ? `Also overdue: ${overdueDecision.topic}` : "No overdue decision is yelling right now.",
+    ].join("\n"),
+    albertPlan: [
+      `SYNC FACILITATION PLAN`,
+      "",
+      `Start with ${subject.name}.`,
+      `Ask for one decision, not five.`,
+      `Capture the answer as either waitingOn cleared, decision logged, or nextStep rewritten.`,
+      `If the answer stays fuzzy, narrow it to the smallest useful choice.`,
+    ].join("\n"),
+  };
+}
+
+function missingPieces(item: Workstream | ScoredWorkstream) {
+  const gaps: string[] = [];
+  if (!item.desiredOutcome.trim()) gaps.push("desired outcome missing");
+  if (!item.nextStep.trim() || item.nextStep.trim().length < 24) gaps.push("next step too vague");
+  if (item.status === "blocked" && !item.waitingOn.trim()) gaps.push("blocked but nobody is named");
+  if (item.blocker.trim() && item.blocker.trim().length < 16) gaps.push("blocker is under-specified");
+  if (item.confidence <= 4) gaps.push("confidence is weak");
+  if (daysSince(item.lastTouched) >= 3) gaps.push("stale context");
+  return gaps;
 }
 
 function buildBrief({
