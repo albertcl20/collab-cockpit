@@ -89,6 +89,20 @@ type CoachPlan = {
   albertPlan: string;
 };
 
+type HandoffDoctor = {
+  score: number;
+  verdict: string;
+  extracted: {
+    changed: string;
+    matters: string;
+    blocked: string;
+    next: string;
+  };
+  missing: string[];
+  strengths: string[];
+  rewrite: string;
+};
+
 const STORAGE_KEY = "collab-cockpit-v4";
 const LEGACY_KEYS = ["collab-cockpit-v3", "collab-cockpit-v2", "collab-cockpit-v1"];
 
@@ -207,6 +221,9 @@ export function CollaborationCockpit() {
   const [coachMode, setCoachMode] = useState<CoachMode>("quick-sync");
   const [snapshotNote, setSnapshotNote] = useState("");
   const [copyState, setCopyState] = useState<string>("");
+  const [handoffDraft, setHandoffDraft] = useState(
+    "Shipped a smarter collaboration coach in Collab Cockpit. It matters because the next sync can start from a sharper plan instead of improvising. No blocker right now. Next I'll test the live deployment and verify the login flow still behaves."
+  );
   const [newUpdate, setNewUpdate] = useState({
     title: "",
     detail: "",
@@ -273,6 +290,10 @@ export function CollaborationCockpit() {
         sevenDayPlan,
       }),
     [briefMode, focusNow, scoredWorkstreams, state.decisions, state.updates, agenda, sevenDayPlan]
+  );
+  const handoffDoctor = useMemo(
+    () => analyzeHandoffDraft({ draft: handoffDraft, focusNow, selected }),
+    [handoffDraft, focusNow, selected]
   );
   const latestSnapshot = state.snapshots[0];
   const healthDelta = latestSnapshot ? collaborationHealth - latestSnapshot.health : 0;
@@ -780,6 +801,65 @@ export function CollaborationCockpit() {
               </div>
             </Panel>
 
+            <Panel title="Handoff doctor" subtitle="Grades a draft against the async format David actually wants: changed, why it matters, blocker, exact next move.">
+              <div className="grid gap-4">
+                <Field label="Draft message">
+                  <textarea
+                    className={`${inputClass} min-h-36`}
+                    value={handoffDraft}
+                    onChange={(e) => setHandoffDraft(e.target.value)}
+                    placeholder="Write a rough update and let the doctor clean it up."
+                  />
+                </Field>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Quality score</p>
+                        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">{handoffDoctor.score}%</p>
+                      </div>
+                      <Badge tone={handoffDoctor.score >= 80 ? statusTone.active : handoffDoctor.score >= 60 ? statusTone.watch : statusTone.blocked}>{handoffDoctor.verdict}</Badge>
+                    </div>
+                    <p className="mt-3 text-sm text-slate-600">Short updates are fine. Missing context is not.</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-sm font-semibold text-slate-900">What the doctor sees</p>
+                    <div className="mt-3 grid gap-2 text-sm text-slate-600">
+                      <div><span className="font-medium text-slate-900">Changed:</span> {handoffDoctor.extracted.changed}</div>
+                      <div><span className="font-medium text-slate-900">Why it matters:</span> {handoffDoctor.extracted.matters}</div>
+                      <div><span className="font-medium text-slate-900">Blocked by:</span> {handoffDoctor.extracted.blocked}</div>
+                      <div><span className="font-medium text-slate-900">Next move:</span> {handoffDoctor.extracted.next}</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                    <p className="text-sm font-semibold text-emerald-900">What already works</p>
+                    <ul className="mt-3 space-y-2 text-sm text-emerald-900/90">
+                      {handoffDoctor.strengths.length ? handoffDoctor.strengths.map((item) => <li key={item}>• {item}</li>) : <li>• Nothing strong yet. The message is still vibes.</li>}
+                    </ul>
+                  </div>
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                    <p className="text-sm font-semibold text-amber-900">What to fix</p>
+                    <ul className="mt-3 space-y-2 text-sm text-amber-900/90">
+                      {handoffDoctor.missing.length ? handoffDoctor.missing.map((item) => <li key={item}>• {item}</li>) : <li>• No obvious holes. A miracle.</li>}
+                    </ul>
+                  </div>
+                </div>
+                <Field label="Cleaner rewrite">
+                  <textarea readOnly className={`${inputClass} min-h-44 font-mono text-sm`} value={handoffDoctor.rewrite} />
+                </Field>
+                <div className="flex flex-wrap gap-3">
+                  <button type="button" onClick={() => copyText(handoffDoctor.rewrite, "doctor rewrite")} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                    Copy rewrite
+                  </button>
+                  <button type="button" onClick={() => setHandoffDraft(handoffDoctor.rewrite)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                    Replace draft with rewrite
+                  </button>
+                </div>
+              </div>
+            </Panel>
+
             <Panel title="Add async update" subtitle="Capture what changed without writing a novella.">
               <div className="grid gap-3">
                 <Field label="Title">
@@ -1257,6 +1337,104 @@ function missingPieces(item: Workstream | ScoredWorkstream) {
   return gaps;
 }
 
+function analyzeHandoffDraft({
+  draft,
+  focusNow,
+  selected,
+}: {
+  draft: string;
+  focusNow?: ScoredWorkstream;
+  selected?: Workstream;
+}): HandoffDoctor {
+  const cleaned = draft.trim();
+  const subject = selected?.name || focusNow?.name || "the current top workstream";
+  const fallbackNext = selected?.nextStep || focusNow?.nextStep || "Name the next concrete move.";
+  const fallbackBlocker = selected?.blocker || "No blocker right now.";
+
+  const parts = splitDraft(cleaned);
+  const changed = findSection(parts, ["changed", "shipped", "finished", "updated", "made", "added", "fixed", "launched"], cleaned)
+    || fallbackFromSentence(parts, 0)
+    || `Updated ${subject}.`;
+  const matters = findSection(parts, ["matters", "because", "so that", "impact", "why"], cleaned)
+    || `It matters because it should reduce coordination waste around ${subject}.`;
+  const blocked = findSection(parts, ["blocked", "blocker", "waiting", "risk", "stuck"], cleaned)
+    || (cleaned ? fallbackBlocker : "No blocker right now.");
+  const next = findSection(parts, ["next", "then", "follow", "will", "plan"], cleaned)
+    || fallbackNext;
+
+  const missing: string[] = [];
+  const strengths: string[] = [];
+  let score = 35;
+
+  if (cleaned.length >= 50) {
+    score += 5;
+    strengths.push("There is enough detail to work with.");
+  } else {
+    missing.push("Too short to be reliably useful.");
+  }
+
+  if (hasRealSection(changed, subject)) {
+    score += 18;
+    strengths.push("It says what changed.");
+  } else {
+    missing.push("Say clearly what changed.");
+  }
+
+  if (hasRealSection(matters, "It matters")) {
+    score += 18;
+    strengths.push("It explains why the change matters.");
+  } else {
+    missing.push("Explain why this matters, not just what happened.");
+  }
+
+  if (hasRealSection(blocked, "No blocker right now.")) {
+    score += 14;
+    strengths.push(blocked.toLowerCase().includes("no blocker") ? "It explicitly says blocker status." : "It names the blocker instead of hiding it.");
+  } else {
+    missing.push("Call out the blocker status explicitly.");
+  }
+
+  if (hasRealSection(next, fallbackNext)) {
+    score += 18;
+    strengths.push("It includes an exact next move.");
+  } else {
+    missing.push("Name the exact next action.");
+  }
+
+  if (cleaned.length > 420) {
+    score -= 10;
+    missing.push("It is getting too long for a fast async handoff.");
+  } else if (cleaned.length >= 90 && cleaned.length <= 320) {
+    score += 6;
+    strengths.push("Length is sane for async reading.");
+  }
+
+  if (sentenceCount(cleaned) >= 3) {
+    score += 4;
+  } else {
+    missing.push("Use a couple of crisp sentences instead of one mushy blob.");
+  }
+
+  score = clamp(score, 18, 100);
+
+  const verdict = score >= 85 ? "ready" : score >= 65 ? "close" : "needs cleanup";
+  const rewrite = [
+    `What changed: ${normalizeSentence(changed)}`,
+    `Why it matters: ${normalizeSentence(matters)}`,
+    `Blocked by: ${normalizeSentence(blocked)}`,
+    `Exact next move: ${normalizeSentence(next)}`,
+  ].join("\n");
+
+  return {
+    score,
+    verdict,
+    extracted: { changed, matters, blocked, next },
+    missing: uniqueList(missing),
+    strengths: uniqueList(strengths),
+    rewrite,
+  };
+}
+
 function buildBrief({
   mode,
   focusNow,
@@ -1441,3 +1619,46 @@ function getBootState() {
 
 const inputClass =
   "w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-100";
+
+function splitDraft(text: string) {
+  return text
+    .split(/\n+/)
+    .flatMap((chunk) => chunk.split(/(?<=[.!?])\s+/))
+    .map((part) => part.replace(/^[-•\s]+/, "").trim())
+    .filter(Boolean);
+}
+
+function findSection(parts: string[], keywords: string[], fullText: string) {
+  const lowered = fullText.toLowerCase();
+  const line = parts.find((part) => keywords.some((keyword) => part.toLowerCase().includes(keyword)));
+  if (line) return line;
+  if (keywords.some((keyword) => lowered.includes(keyword))) {
+    return fullText.trim();
+  }
+  return "";
+}
+
+function fallbackFromSentence(parts: string[], index: number) {
+  return parts[index] ?? "";
+}
+
+function sentenceCount(text: string) {
+  return splitDraft(text).length;
+}
+
+function hasRealSection(value: string, fallback: string) {
+  const cleaned = value.trim();
+  if (!cleaned) return false;
+  if (cleaned === fallback) return false;
+  return cleaned.length >= 12;
+}
+
+function normalizeSentence(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "Missing.";
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function uniqueList(items: string[]) {
+  return [...new Set(items)];
+}
