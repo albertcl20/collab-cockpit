@@ -115,6 +115,17 @@ type HandoffDoctor = {
   rewrite: string;
 };
 
+type NudgeItem = {
+  id: string;
+  workstreamName: string;
+  target: string;
+  reason: string;
+  urgency: "high" | "medium" | "low";
+  timing: string;
+  sendBy: string;
+  message: string;
+};
+
 type InboxDistiller = {
   score: number;
   verdict: string;
@@ -258,6 +269,12 @@ const insightTone: Record<Insight["tone"], string> = {
   emerald: "border-emerald-200 bg-emerald-50 text-emerald-800",
 };
 
+const nudgeTone: Record<NudgeItem["urgency"], string> = {
+  high: "border-rose-200 bg-rose-50 text-rose-800",
+  medium: "border-amber-200 bg-amber-50 text-amber-800",
+  low: "border-blue-200 bg-blue-50 text-blue-800",
+};
+
 export function CollaborationCockpit() {
   const bootState = getBootState();
   const [state, setState] = useState<AppState>(bootState);
@@ -323,6 +340,7 @@ export function CollaborationCockpit() {
   const sevenDayPlan = buildSevenDayPlan(scoredWorkstreams, state.decisions);
   const insights = useMemo(() => buildInsights(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const protocolPlanner = useMemo(() => buildProtocolPlanner(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
+  const nudgeQueue = useMemo(() => buildNudgeQueue(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const coachPlan = useMemo(
     () => buildCoachPlan({ mode: coachMode, focusNow, selected, decisions: state.decisions, updates: state.updates }),
     [coachMode, focusNow, selected, state.decisions, state.updates]
@@ -623,6 +641,50 @@ export function CollaborationCockpit() {
                   Copy Albert plan
                 </button>
                 {copyState ? <span className="self-center text-sm text-emerald-700">Copied {copyState}.</span> : null}
+              </div>
+            </Panel>
+
+            <Panel title="Nudge queue" subtitle="Turns stale dependencies and fuzzy waiting states into concrete follow-ups instead of hopeful silence.">
+              <div className="mb-4 grid gap-3 md:grid-cols-4">
+                <MetricCard label="Follow-ups queued" value={String(nudgeQueue.items.length)} note={nudgeQueue.items.length ? "Live pings worth sending" : "Nothing needs chasing right now"} />
+                <MetricCard label="Send today" value={String(nudgeQueue.todayCount)} note={nudgeQueue.todayCount ? "Do these before they go stale" : "No same-day pressure"} />
+                <MetricCard label="High urgency" value={String(nudgeQueue.highCount)} note={nudgeQueue.highCount ? "These are slowing real work" : "No screaming fires"} />
+                <MetricCard label="Overdue decisions" value={String(nudgeQueue.decisionCount)} note={nudgeQueue.decisionCount ? "Some nudges are really decision nudges" : "No decision chasing needed"} />
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">Suggested follow-up rhythm</h3>
+                    <p className="mt-1 text-sm text-slate-600">{nudgeQueue.headline}</p>
+                  </div>
+                  <button type="button" onClick={() => copyText(nudgeQueue.copyBlock, "nudge queue")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                    Copy nudge queue
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3">
+                {nudgeQueue.items.length ? nudgeQueue.items.map((item) => (
+                  <div key={item.id} className={`rounded-2xl border p-4 ${nudgeTone[item.urgency]}`}>
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-sm font-semibold">{item.workstreamName}</h3>
+                          <Badge tone="border-white/70 bg-white/70 text-slate-700">{item.urgency} urgency</Badge>
+                          <Badge tone="border-white/70 bg-white/70 text-slate-700">send {item.timing}</Badge>
+                        </div>
+                        <p className="mt-2 text-sm leading-6 opacity-90">{item.reason}</p>
+                        <div className="mt-3 grid gap-1 text-sm opacity-90">
+                          <p><span className="font-medium">Target:</span> {item.target}</p>
+                          <p><span className="font-medium">Send by:</span> {item.sendBy}</p>
+                        </div>
+                      </div>
+                      <button type="button" onClick={() => copyText(item.message, `${item.workstreamName} nudge`)} className="rounded-xl border border-white/70 bg-white/80 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-white">
+                        Copy message
+                      </button>
+                    </div>
+                    <textarea readOnly className={`${inputClass} mt-4 min-h-28 bg-white/80 font-mono text-sm`} value={item.message} />
+                  </div>
+                )) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">No active nudges. Either collaboration is unusually clean or the board is under-reporting pain.</p>}
               </div>
             </Panel>
 
@@ -1789,6 +1851,104 @@ function recommendProtocol(item: ScoredWorkstream): ProtocolRecommendation {
     output,
     urgencyLabel,
   };
+}
+
+function buildNudgeQueue(workstreams: ScoredWorkstream[], decisions: Decision[]) {
+  const items = workstreams
+    .filter((item) => item.status !== "done")
+    .flatMap((item) => {
+      const nudges: NudgeItem[] = [];
+      const target = inferNudgeTarget(item);
+      const waitingReason = item.waitingOn.trim();
+      const decisionReason = item.decisionNeeded.trim();
+      const isStale = item.ageDays >= 3;
+      const needsNudge = Boolean(waitingReason || decisionReason || item.status === "blocked" || (isStale && item.urgency >= 7));
+
+      if (!needsNudge) return nudges;
+
+      const urgency: NudgeItem["urgency"] = item.status === "blocked" || item.urgency >= 8 || item.drag >= 50
+        ? "high"
+        : item.ageDays >= 3 || item.waitingOn.trim()
+          ? "medium"
+          : "low";
+
+      const reason = item.status === "blocked"
+        ? `${item.name} is blocked and should not be left to quietly rot.`
+        : waitingReason
+          ? `${item.name} is waiting on an external answer, so silence is now part of the blocker.`
+          : decisionReason
+            ? `${item.name} needs a real choice, not more ambient discussion.`
+            : `${item.name} is stale enough that a small follow-up is cheaper than more drift.`;
+
+      const timing = urgency === "high" ? "today" : urgency === "medium" ? "within 24h" : "this week";
+      const sendBy = urgency === "high"
+        ? `Today by ${suggestSendHour(item, 16)}`
+        : urgency === "medium"
+          ? `Tomorrow by ${suggestSendHour(item, 11)}`
+          : `This week by ${suggestSendHour(item, 15)}`;
+
+      const message = [
+        `Quick nudge on ${item.name}.`,
+        `What changed: this work is currently ${item.status}${item.blocker.trim() ? ` because ${normalizeSentence(item.blocker).replace(/[.]$/, "")}` : ""}.`,
+        `Why it matters: impact ${item.impact}/10, urgency ${item.urgency}/10, collaboration drag ${item.drag}%.`,
+        `Need from ${target}: ${normalizeSentence(waitingReason || decisionReason || `Confirm whether ${item.name} should stay in the top stack.`)}`,
+        `Exact next move after reply: ${normalizeSentence(item.nextStep)}`,
+      ].join("\n");
+
+      nudges.push({
+        id: `${item.id}-nudge`,
+        workstreamName: item.name,
+        target,
+        reason,
+        urgency,
+        timing,
+        sendBy,
+        message,
+      });
+
+      return nudges;
+    })
+    .slice(0, 6)
+    .sort((a, b) => urgencyWeight(b.urgency) - urgencyWeight(a.urgency));
+
+  const overdueDecisionItems = decisions.filter((item) => isPast(item.deadline)).length;
+  const todayCount = items.filter((item) => item.timing === "today").length;
+  const highCount = items.filter((item) => item.urgency === "high").length;
+  const headline = items.length
+    ? `${highCount ? `${highCount} high-urgency follow-up${highCount > 1 ? "s" : ""}` : "No emergency nudges"}, ${todayCount} that should go out today, and ${overdueDecisionItems} overdue decision${overdueDecisionItems === 1 ? "" : "s"} feeding the queue.`
+    : `No nudges queued. Either the board is healthy or it is being suspiciously polite.`;
+  const copyBlock = [
+    "NUDGE QUEUE",
+    "",
+    ...items.map((item, index) => `${index + 1}. ${item.workstreamName} — ${item.urgency} urgency · ${item.sendBy}\nTarget: ${item.target}\nReason: ${item.reason}\n\n${item.message}`),
+  ].join("\n\n");
+
+  return {
+    items,
+    todayCount,
+    highCount,
+    decisionCount: overdueDecisionItems,
+    headline,
+    copyBlock,
+  };
+}
+
+function inferNudgeTarget(item: ScoredWorkstream) {
+  const waiting = item.waitingOn.toLowerCase();
+  if (waiting.includes("david")) return "David";
+  if (waiting.includes("albert")) return "Albert";
+  if (item.owner.toLowerCase().includes("david")) return "David";
+  if (item.owner.toLowerCase().includes("albert")) return "Albert";
+  return item.owner || "Owner";
+}
+
+function suggestSendHour(item: ScoredWorkstream, fallbackHour: number) {
+  const hour = item.urgency >= 8 ? Math.max(10, fallbackHour - 2) : fallbackHour;
+  return `${String(hour).padStart(2, "0")}:00`;
+}
+
+function urgencyWeight(urgency: NudgeItem["urgency"]) {
+  return urgency === "high" ? 3 : urgency === "medium" ? 2 : 1;
 }
 
 function whyNow(item: Pick<ScoredWorkstream, "name" | "status" | "urgency" | "confidence" | "ageDays" | "nextStep">) {
