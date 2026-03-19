@@ -7,6 +7,7 @@ type Status = "active" | "watch" | "blocked" | "done";
 type UpdateType = "from-david" | "from-albert" | "decision" | "risk";
 type BriefMode = "async-update" | "weekly-review" | "unblock-plan" | "alignment-agenda";
 type CoachMode = "quick-sync" | "deep-work" | "async-handoff";
+type ProtocolMode = "async" | "quick-sync" | "deep-dive" | "decision-review" | "park";
 
 type Workstream = {
   id: string;
@@ -87,6 +88,17 @@ type CoachPlan = {
   cards: CoachCard[];
   davidMessage: string;
   albertPlan: string;
+};
+
+type ProtocolRecommendation = {
+  id: string;
+  workstreamName: string;
+  mode: ProtocolMode;
+  minutes: number;
+  reason: string;
+  prep: string;
+  output: string;
+  urgencyLabel: string;
 };
 
 type HandoffDoctor = {
@@ -206,6 +218,14 @@ const typeTone: Record<UpdateType, string> = {
   risk: "bg-rose-50 text-rose-700 border-rose-200",
 };
 
+const protocolTone: Record<ProtocolMode, string> = {
+  async: "border-blue-200 bg-blue-50 text-blue-800",
+  "quick-sync": "border-violet-200 bg-violet-50 text-violet-800",
+  "deep-dive": "border-amber-200 bg-amber-50 text-amber-800",
+  "decision-review": "border-rose-200 bg-rose-50 text-rose-800",
+  park: "border-slate-200 bg-slate-50 text-slate-700",
+};
+
 const insightTone: Record<Insight["tone"], string> = {
   rose: "border-rose-200 bg-rose-50 text-rose-800",
   amber: "border-amber-200 bg-amber-50 text-amber-800",
@@ -274,6 +294,7 @@ export function CollaborationCockpit() {
   const agenda = buildAgenda(scoredWorkstreams, state.decisions);
   const sevenDayPlan = buildSevenDayPlan(scoredWorkstreams, state.decisions);
   const insights = useMemo(() => buildInsights(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
+  const protocolPlanner = useMemo(() => buildProtocolPlanner(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const coachPlan = useMemo(
     () => buildCoachPlan({ mode: coachMode, focusNow, selected, decisions: state.decisions, updates: state.updates }),
     [coachMode, focusNow, selected, state.decisions, state.updates]
@@ -491,6 +512,46 @@ export function CollaborationCockpit() {
                     <p className="mt-1 text-sm leading-6 opacity-90">{insight.detail}</p>
                   </div>
                 ))}
+              </div>
+            </Panel>
+
+            <Panel title="Protocol planner" subtitle="Turns the board into a sane collaboration plan instead of defaulting everything into meetings.">
+              <div className="grid gap-4">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <MetricCard label="Sync minutes" value={String(protocolPlanner.syncMinutes)} note={protocolPlanner.syncMinutes ? "Time that actually deserves live conversation" : "No live sync required right now"} />
+                  <MetricCard label="Async-first items" value={String(protocolPlanner.asyncCount)} note={protocolPlanner.asyncCount ? "Cheaper to handle without a meeting" : "Nothing safely async"} />
+                  <MetricCard label="Decision reviews" value={String(protocolPlanner.decisionCount)} note={protocolPlanner.decisionCount ? "Needs a real call or crisp decision pass" : "No decision reviews screaming"} />
+                  <MetricCard label="Deep dives" value={String(protocolPlanner.deepDiveCount)} note={protocolPlanner.deepDiveCount ? "Protect thinking time for these" : "No heavy thinking blocks required"} />
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">Recommended run of show</h3>
+                      <p className="mt-1 text-sm text-slate-600">{protocolPlanner.headline}</p>
+                    </div>
+                    <button type="button" onClick={() => copyText(protocolPlanner.copyBlock, "protocol plan")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                      Copy protocol plan
+                    </button>
+                  </div>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    {protocolPlanner.recommendations.map((item) => (
+                      <div key={item.id} className={`rounded-2xl border p-4 ${protocolTone[item.mode]}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-semibold">{item.workstreamName}</h4>
+                            <p className="mt-1 text-xs uppercase tracking-[0.16em] opacity-80">{item.mode.replace('-', ' ')} · {item.minutes} min · {item.urgencyLabel}</p>
+                          </div>
+                          <Badge tone="border-white/70 bg-white/70 text-slate-700">{item.mode.replace('-', ' ')}</Badge>
+                        </div>
+                        <p className="mt-3 text-sm leading-6 opacity-90">{item.reason}</p>
+                        <div className="mt-3 space-y-2 text-sm opacity-90">
+                          <p><span className="font-medium">Prep:</span> {item.prep}</p>
+                          <p><span className="font-medium">Expected output:</span> {item.output}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </Panel>
 
@@ -1529,6 +1590,95 @@ function buildBrief({
     "Decisions needing attention:",
     ...decisions.slice(0, 2).map((item) => `- ${item.topic} by ${prettyDate(item.deadline)} → ${item.recommendation}`),
   ].join("\n");
+}
+
+
+function buildProtocolPlanner(workstreams: ScoredWorkstream[], decisions: Decision[]) {
+  const recommendations = workstreams.slice(0, 5).map(recommendProtocol);
+  const syncMinutes = recommendations
+    .filter((item) => item.mode === "quick-sync" || item.mode === "decision-review")
+    .reduce((sum, item) => sum + item.minutes, 0);
+  const asyncCount = recommendations.filter((item) => item.mode === "async").length;
+  const decisionCount = recommendations.filter((item) => item.mode === "decision-review").length;
+  const deepDiveCount = recommendations.filter((item) => item.mode === "deep-dive").length;
+  const overdueDecisions = decisions.filter((item) => isPast(item.deadline)).length;
+  const headline = syncMinutes
+    ? `Protect ${syncMinutes} minutes of live conversation and keep the rest async. ${overdueDecisions ? `${overdueDecisions} overdue decision${overdueDecisions > 1 ? "s" : ""} are pushing this upward.` : "Meeting sprawl does not get a vote."}`
+    : `No real sync budget needed right now. Keep momentum async and save the calendar from itself.`;
+  const copyBlock = [
+    "COLLABORATION PROTOCOL PLAN",
+    "",
+    `Live sync budget: ${syncMinutes} min`,
+    `Async-first items: ${asyncCount}`,
+    `Decision reviews: ${decisionCount}`,
+    `Deep dives: ${deepDiveCount}`,
+    "",
+    ...recommendations.map((item, index) => `${index + 1}. ${item.workstreamName} — ${item.mode} (${item.minutes} min)\n   Why: ${item.reason}\n   Prep: ${item.prep}\n   Output: ${item.output}`),
+  ].join("\n");
+
+  return { recommendations, syncMinutes, asyncCount, decisionCount, deepDiveCount, headline, copyBlock };
+}
+
+function recommendProtocol(item: ScoredWorkstream): ProtocolRecommendation {
+  const missing = missingPieces(item);
+  const hasDecisionPressure = item.decisionNeeded.trim().length > 0 || item.status === "blocked" || item.drag >= 55;
+  const isAsyncFriendly = item.readiness >= 78 && item.drag <= 28 && !item.waitingOn.trim() && !item.decisionNeeded.trim();
+  const needsDeepDive = item.energy === "deep" && item.status !== "blocked" && item.confidence <= 6;
+
+  let mode: ProtocolMode = "async";
+  if (item.status === "done" || item.urgency <= 3) mode = "park";
+  else if (hasDecisionPressure && (item.blocker.trim() || item.decisionNeeded.trim())) mode = "decision-review";
+  else if (needsDeepDive) mode = "deep-dive";
+  else if (item.drag >= 38 || item.waitingOn.trim()) mode = "quick-sync";
+  else if (isAsyncFriendly) mode = "async";
+  else if (item.energy === "deep") mode = "deep-dive";
+
+  const minutes = mode === "decision-review" ? 20 : mode === "quick-sync" ? 12 : mode === "deep-dive" ? 30 : mode === "park" ? 0 : 8;
+  const urgencyLabel = item.status === "blocked" ? "unblock now" : item.urgency >= 8 ? "high urgency" : item.ageDays >= 3 ? "stale" : "normal";
+
+  const reason =
+    mode === "decision-review"
+      ? `${item.name} is carrying decision pressure or a real blocker. A short decision review is cheaper than another round of fuzzy async.`
+      : mode === "quick-sync"
+        ? `${item.name} has enough coordination drag that a tight sync beats back-and-forth guessing.`
+        : mode === "deep-dive"
+          ? `${item.name} needs protected thinking time more than chat. The bottleneck is judgment, not messaging.`
+          : mode === "park"
+            ? `${item.name} does not deserve active collaboration bandwidth right now.`
+            : `${item.name} is specified well enough to move asynchronously without wasting anybody's calendar.`;
+
+  const prep =
+    mode === "decision-review"
+      ? item.decisionNeeded || item.blocker || "Write the choice that actually needs a call."
+      : mode === "quick-sync"
+        ? missing.length ? `Clean up: ${missing.join(", ")}.` : `Bring the exact next step and any dependency for ${item.name}.`
+        : mode === "deep-dive"
+          ? `Protect quiet time and answer: what evidence would change the plan for ${item.name}?`
+          : mode === "park"
+            ? `Archive or deprioritize unless urgency changes.`
+            : `Send one crisp update covering changed / matters / blocked / next.`;
+
+  const output =
+    mode === "decision-review"
+      ? `A logged decision, named owner, and rewritten next step.`
+      : mode === "quick-sync"
+        ? `A resolved dependency and a cleaner handoff.`
+        : mode === "deep-dive"
+          ? `A decision-ready artifact or sharper recommendation.`
+          : mode === "park"
+            ? `A conscious deprioritization, not zombie work.`
+            : `A short async note plus forward motion.`;
+
+  return {
+    id: item.id,
+    workstreamName: item.name,
+    mode,
+    minutes,
+    reason,
+    prep,
+    output,
+    urgencyLabel,
+  };
 }
 
 function whyNow(item: Pick<ScoredWorkstream, "name" | "status" | "urgency" | "confidence" | "ageDays" | "nextStep">) {
