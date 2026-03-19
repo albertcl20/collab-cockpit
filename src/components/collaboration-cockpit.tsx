@@ -56,6 +56,34 @@ type Snapshot = {
   topFocus: string;
 };
 
+type Budget = {
+  deepHours: number;
+  lightHours: number;
+  syncMinutes: number;
+};
+
+type BudgetAllocation = {
+  workstreamName: string;
+  lane: "deep" | "light" | "sync";
+  hours: number;
+  minutes: number;
+  verdict: "commit" | "stretch" | "defer";
+  reason: string;
+  nextMove: string;
+};
+
+type BudgetPlan = {
+  summary: string;
+  overload: boolean;
+  deepUsed: number;
+  lightUsed: number;
+  syncUsed: number;
+  commit: BudgetAllocation[];
+  stretch: BudgetAllocation[];
+  defer: BudgetAllocation[];
+  contract: string;
+};
+
 type AppState = {
   workstreams: Workstream[];
   updates: Update[];
@@ -283,6 +311,7 @@ export function CollaborationCockpit() {
   const [coachMode, setCoachMode] = useState<CoachMode>("quick-sync");
   const [snapshotNote, setSnapshotNote] = useState("");
   const [copyState, setCopyState] = useState<string>("");
+  const [budget, setBudget] = useState<Budget>({ deepHours: 6, lightHours: 4, syncMinutes: 45 });
   const [inboxDraft, setInboxDraft] = useState(
     "David: Central onboarding is still fuzzy because the tenant-level auth edge cases keep spilling across docs. I need one decision on whether we optimize for the happy path first or spend the week on exception handling. No hard blocker, but I do need David to confirm the decision bar. Next I can turn that into a sharper recommendation and updated plan."
   );
@@ -341,6 +370,7 @@ export function CollaborationCockpit() {
   const insights = useMemo(() => buildInsights(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const protocolPlanner = useMemo(() => buildProtocolPlanner(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const nudgeQueue = useMemo(() => buildNudgeQueue(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
+  const budgetPlan = useMemo(() => buildBudgetPlan(scoredWorkstreams, budget), [scoredWorkstreams, budget]);
   const coachPlan = useMemo(
     () => buildCoachPlan({ mode: coachMode, focusNow, selected, decisions: state.decisions, updates: state.updates }),
     [coachMode, focusNow, selected, state.decisions, state.updates]
@@ -685,6 +715,45 @@ export function CollaborationCockpit() {
                     <textarea readOnly className={`${inputClass} mt-4 min-h-28 bg-white/80 font-mono text-sm`} value={item.message} />
                   </div>
                 )) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">No active nudges. Either collaboration is unusually clean or the board is under-reporting pain.</p>}
+              </div>
+            </Panel>
+
+            <Panel title="Attention budget" subtitle="Makes the weekly plan fit reality. Good collaboration dies when the board promises more than the calendar can carry.">
+              <div className="grid gap-4">
+                <div className="grid gap-4 md:grid-cols-3">
+                  <Field label={`Deep work hours · ${budget.deepHours}`}>
+                    <input type="range" min={0} max={20} value={budget.deepHours} onChange={(e) => setBudget((current) => ({ ...current, deepHours: Number(e.target.value) }))} />
+                  </Field>
+                  <Field label={`Light work hours · ${budget.lightHours}`}>
+                    <input type="range" min={0} max={20} value={budget.lightHours} onChange={(e) => setBudget((current) => ({ ...current, lightHours: Number(e.target.value) }))} />
+                  </Field>
+                  <Field label={`Sync minutes · ${budget.syncMinutes}`}>
+                    <input type="range" min={0} max={180} step={5} value={budget.syncMinutes} onChange={(e) => setBudget((current) => ({ ...current, syncMinutes: Number(e.target.value) }))} />
+                  </Field>
+                </div>
+                <div className="grid gap-3 md:grid-cols-4">
+                  <MetricCard label="Deep used" value={`${budgetPlan.deepUsed}h`} note={`${budget.deepHours}h available`} />
+                  <MetricCard label="Light used" value={`${budgetPlan.lightUsed}h`} note={`${budget.lightHours}h available`} />
+                  <MetricCard label="Sync used" value={`${budgetPlan.syncUsed}m`} note={`${budget.syncMinutes}m available`} />
+                  <MetricCard label="Plan status" value={budgetPlan.overload ? "Overloaded" : "Fits"} note={budgetPlan.summary} />
+                </div>
+                <div className={`rounded-2xl border p-4 ${budgetPlan.overload ? "border-rose-200 bg-rose-50 text-rose-900" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`}>
+                  <h3 className="text-base font-semibold">Capacity verdict</h3>
+                  <p className="mt-2 text-sm leading-6 opacity-90">{budgetPlan.summary}</p>
+                </div>
+                <div className="grid gap-4 lg:grid-cols-3">
+                  <BudgetColumn title="Commit" items={budgetPlan.commit} empty="No work made the commit lane yet." />
+                  <BudgetColumn title="Stretch" items={budgetPlan.stretch} empty="Nothing sitting in stretch." />
+                  <BudgetColumn title="Defer" items={budgetPlan.defer} empty="Nothing to defer. Either the scope is clean or the board is still lying." />
+                </div>
+                <Field label="Copy-ready collaboration contract">
+                  <textarea readOnly className={`${inputClass} min-h-64 font-mono text-sm`} value={budgetPlan.contract} />
+                </Field>
+                <div className="flex flex-wrap gap-3">
+                  <button type="button" onClick={() => copyText(budgetPlan.contract, "budget contract")} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                    Copy budget contract
+                  </button>
+                </div>
               </div>
             </Panel>
 
@@ -1219,6 +1288,29 @@ function MiniStat({ label, value }: { label: string; value: string }) {
 
 function Badge({ children, tone }: { children: React.ReactNode; tone?: string }) {
   return <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${tone ?? "border-slate-200 bg-slate-50 text-slate-600"}`}>{children}</span>;
+}
+
+function BudgetColumn({ title, items, empty }: { title: string; items: BudgetAllocation[]; empty: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+      <div className="mt-3 space-y-3">
+        {items.length ? items.map((item) => (
+          <div key={`${title}-${item.workstreamName}`} className="rounded-2xl border border-slate-200 bg-white p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">{item.workstreamName}</p>
+                <p className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">{item.lane} · {item.hours ? `${item.hours}h` : `${item.minutes}m`}</p>
+              </div>
+              <Badge>{item.verdict}</Badge>
+            </div>
+            <p className="mt-2 text-sm text-slate-600">{item.reason}</p>
+            <p className="mt-2 text-xs text-slate-500">Next: {item.nextMove}</p>
+          </div>
+        )) : <p className="text-sm text-slate-500">{empty}</p>}
+      </div>
+    </div>
+  );
 }
 
 function TrendChart({ snapshots, currentHealth }: { snapshots: Snapshot[]; currentHealth: number }) {
@@ -1851,6 +1943,92 @@ function recommendProtocol(item: ScoredWorkstream): ProtocolRecommendation {
     output,
     urgencyLabel,
   };
+}
+
+function buildBudgetPlan(workstreams: ScoredWorkstream[], budget: Budget): BudgetPlan {
+  const allocations = workstreams
+    .filter((item) => item.status !== "done")
+    .slice(0, 6)
+    .map((item, index) => {
+      const lane: BudgetAllocation["lane"] = item.status === "blocked"
+        ? "sync"
+        : item.energy === "deep"
+          ? "deep"
+          : item.waitingOn.trim() || item.decisionNeeded.trim() || item.drag >= 40
+            ? "sync"
+            : "light";
+      const hours = lane === "deep" ? (item.status === "blocked" ? 0 : item.urgency >= 8 ? 3 : 2) : lane === "light" ? (item.urgency >= 8 ? 2 : 1) : 0;
+      const minutes = lane === "sync" ? (item.status === "blocked" || item.decisionNeeded.trim() ? 20 : 10) : 0;
+      const reason = lane === "deep"
+        ? `${item.name} needs protected thinking, not more chat.`
+        : lane === "sync"
+          ? `${item.name} needs a decision or unblock conversation.`
+          : `${item.name} can move with lighter execution energy.`;
+      return { item, lane, hours, minutes, order: index, reason };
+    });
+
+  let deepLeft = budget.deepHours;
+  let lightLeft = budget.lightHours;
+  let syncLeft = budget.syncMinutes;
+
+  const commit: BudgetAllocation[] = [];
+  const stretch: BudgetAllocation[] = [];
+  const defer: BudgetAllocation[] = [];
+
+  allocations.forEach(({ item, lane, hours, minutes, reason }, index) => {
+    const fits = lane === "deep" ? hours <= deepLeft : lane === "light" ? hours <= lightLeft : minutes <= syncLeft;
+    const nearMiss = lane === "deep"
+      ? hours <= deepLeft + 2
+      : lane === "light"
+        ? hours <= lightLeft + 1
+        : minutes <= syncLeft + 15;
+    const verdict: BudgetAllocation["verdict"] = fits ? "commit" : nearMiss && index <= 3 ? "stretch" : "defer";
+    const allocation: BudgetAllocation = {
+      workstreamName: item.name,
+      lane,
+      hours,
+      minutes,
+      verdict,
+      reason,
+      nextMove: item.nextStep,
+    };
+
+    if (verdict === "commit") {
+      if (lane === "deep") deepLeft -= hours;
+      if (lane === "light") lightLeft -= hours;
+      if (lane === "sync") syncLeft -= minutes;
+      commit.push(allocation);
+    } else if (verdict === "stretch") {
+      stretch.push(allocation);
+    } else {
+      defer.push(allocation);
+    }
+  });
+
+  const deepUsed = budget.deepHours - deepLeft;
+  const lightUsed = budget.lightHours - lightLeft;
+  const syncUsed = budget.syncMinutes - syncLeft;
+  const overload = stretch.length > 0 || defer.some((item) => item.lane !== "light" || item.hours > 0 || item.minutes > 0);
+  const summary = overload
+    ? `The board wants more than this week can hold. Commit ${commit.length}, keep ${stretch.length} as stretch, and explicitly defer ${defer.length} item${defer.length === 1 ? "" : "s"}.`
+    : `The current top stack fits inside the budget. Weirdly adult behavior.`;
+  const contract = [
+    "COLLABORATION CONTRACT",
+    "",
+    `Budget: ${budget.deepHours}h deep · ${budget.lightHours}h light · ${budget.syncMinutes}m sync`,
+    `Verdict: ${summary}`,
+    "",
+    "Commit:",
+    ...(commit.length ? commit.map((item, index) => `${index + 1}. ${item.workstreamName} — ${item.lane} ${item.hours ? `${item.hours}h` : `${item.minutes}m`}\n   Why: ${item.reason}\n   Next: ${item.nextMove}`) : ["- Nothing committed yet."]),
+    "",
+    "Stretch:",
+    ...(stretch.length ? stretch.map((item, index) => `${index + 1}. ${item.workstreamName} — ${item.lane} ${item.hours ? `${item.hours}h` : `${item.minutes}m`}\n   Why: ${item.reason}`) : ["- Nothing in stretch."]),
+    "",
+    "Defer:",
+    ...(defer.length ? defer.map((item, index) => `${index + 1}. ${item.workstreamName} — stop pretending this fits automatically.`) : ["- Nothing deferred."]),
+  ].join("\n");
+
+  return { summary, overload, deepUsed, lightUsed, syncUsed, commit, stretch, defer, contract };
 }
 
 function buildNudgeQueue(workstreams: ScoredWorkstream[], decisions: Decision[]) {
