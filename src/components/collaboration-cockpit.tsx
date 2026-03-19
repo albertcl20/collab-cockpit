@@ -115,6 +115,31 @@ type HandoffDoctor = {
   rewrite: string;
 };
 
+type InboxDistiller = {
+  score: number;
+  verdict: string;
+  workstreamName: string;
+  signals: string[];
+  suggestedPatch: {
+    status: Status;
+    energy: Energy;
+    impact: number;
+    urgency: number;
+    confidence: number;
+    nextStep: string;
+    blocker: string;
+    waitingOn: string;
+    desiredOutcome: string;
+    decisionNeeded: string;
+    notes: string;
+  };
+  updateTitle: string;
+  updateDetail: string;
+  decisionSuggestion: string;
+  ask: string;
+  cleanedBrief: string;
+};
+
 const STORAGE_KEY = "collab-cockpit-v4";
 const LEGACY_KEYS = ["collab-cockpit-v3", "collab-cockpit-v2", "collab-cockpit-v1"];
 
@@ -241,6 +266,9 @@ export function CollaborationCockpit() {
   const [coachMode, setCoachMode] = useState<CoachMode>("quick-sync");
   const [snapshotNote, setSnapshotNote] = useState("");
   const [copyState, setCopyState] = useState<string>("");
+  const [inboxDraft, setInboxDraft] = useState(
+    "David: Central onboarding is still fuzzy because the tenant-level auth edge cases keep spilling across docs. I need one decision on whether we optimize for the happy path first or spend the week on exception handling. No hard blocker, but I do need David to confirm the decision bar. Next I can turn that into a sharper recommendation and updated plan."
+  );
   const [handoffDraft, setHandoffDraft] = useState(
     "Shipped a smarter collaboration coach in Collab Cockpit. It matters because the next sync can start from a sharper plan instead of improvising. No blocker right now. Next I'll test the live deployment and verify the login flow still behaves."
   );
@@ -315,6 +343,10 @@ export function CollaborationCockpit() {
   const handoffDoctor = useMemo(
     () => analyzeHandoffDraft({ draft: handoffDraft, focusNow, selected }),
     [handoffDraft, focusNow, selected]
+  );
+  const inboxDistiller = useMemo(
+    () => distillInboxDraft({ draft: inboxDraft, selected, focusNow }),
+    [inboxDraft, selected, focusNow]
   );
   const latestSnapshot = state.snapshots[0];
   const healthDelta = latestSnapshot ? collaborationHealth - latestSnapshot.health : 0;
@@ -859,6 +891,84 @@ export function CollaborationCockpit() {
                 <button type="button" onClick={addDecision} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
                   Save decision
                 </button>
+              </div>
+            </Panel>
+
+            <Panel title="Inbox distiller" subtitle="Paste a messy note, chat chunk, or voice-transcript blob. The app pulls out the real update, ask, blocker, and workstream patch.">
+              <div className="grid gap-4">
+                <Field label="Raw note or pasted chat">
+                  <textarea
+                    className={`${inputClass} min-h-40`}
+                    value={inboxDraft}
+                    onChange={(e) => setInboxDraft(e.target.value)}
+                    placeholder="Paste rough notes and let the app turn them into something usable."
+                  />
+                </Field>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Distill quality</p>
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                      <p className="text-3xl font-semibold tracking-tight text-slate-900">{inboxDistiller.score}%</p>
+                      <Badge tone={inboxDistiller.score >= 80 ? statusTone.active : inboxDistiller.score >= 60 ? statusTone.watch : statusTone.blocked}>{inboxDistiller.verdict}</Badge>
+                    </div>
+                    <p className="mt-3 text-sm text-slate-600">Workstream target: <span className="font-medium text-slate-900">{inboxDistiller.workstreamName}</span></p>
+                  </div>
+                  <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 md:col-span-2">
+                    <p className="text-sm font-semibold text-blue-900">What the distiller detected</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {inboxDistiller.signals.map((signal) => <Badge key={signal} tone="border-blue-200 bg-white/80 text-blue-800">{signal}</Badge>)}
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-blue-900/90">{inboxDistiller.ask}</p>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Field label="Copy-ready update">
+                    <textarea readOnly className={`${inputClass} min-h-44 font-mono text-sm`} value={inboxDistiller.cleanedBrief} />
+                  </Field>
+                  <div className="grid gap-3">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-sm font-semibold text-slate-900">Suggested workstream patch</p>
+                      <div className="mt-3 grid gap-2 text-sm text-slate-600">
+                        <div><span className="font-medium text-slate-900">Status:</span> {inboxDistiller.suggestedPatch.status}</div>
+                        <div><span className="font-medium text-slate-900">Energy:</span> {inboxDistiller.suggestedPatch.energy}</div>
+                        <div><span className="font-medium text-slate-900">Impact / urgency / confidence:</span> {inboxDistiller.suggestedPatch.impact} / {inboxDistiller.suggestedPatch.urgency} / {inboxDistiller.suggestedPatch.confidence}</div>
+                        <div><span className="font-medium text-slate-900">Next step:</span> {inboxDistiller.suggestedPatch.nextStep}</div>
+                        <div><span className="font-medium text-slate-900">Blocker:</span> {inboxDistiller.suggestedPatch.blocker || "None detected."}</div>
+                        <div><span className="font-medium text-slate-900">Waiting on:</span> {inboxDistiller.suggestedPatch.waitingOn || "Nobody named."}</div>
+                        <div><span className="font-medium text-slate-900">Decision needed:</span> {inboxDistiller.suggestedPatch.decisionNeeded || "No clear decision request detected."}</div>
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                      <p className="text-sm font-semibold text-amber-900">Decision suggestion</p>
+                      <p className="mt-2 text-sm leading-6 text-amber-900/90">{inboxDistiller.decisionSuggestion}</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <button type="button" onClick={() => copyText(inboxDistiller.cleanedBrief, "distilled update")} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                    Copy distilled update
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateWorkstream(selected?.id ?? focusNow?.id ?? "", inboxDistiller.suggestedPatch)}
+                    disabled={!selected?.id && !focusNow?.id}
+                    className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Apply patch to selected workstream
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewUpdate({
+                      title: inboxDistiller.updateTitle,
+                      detail: inboxDistiller.updateDetail,
+                      relatedWorkstream: inboxDistiller.workstreamName,
+                      type: "from-albert",
+                    })}
+                    className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Send to update form
+                  </button>
+                </div>
               </div>
             </Panel>
 
@@ -1811,4 +1921,161 @@ function normalizeSentence(value: string) {
 
 function uniqueList(items: string[]) {
   return [...new Set(items)];
+}
+
+function distillInboxDraft({
+  draft,
+  selected,
+  focusNow,
+}: {
+  draft: string;
+  selected?: Workstream;
+  focusNow?: ScoredWorkstream;
+}): InboxDistiller {
+  const cleaned = draft.trim();
+  const reference = selected ?? focusNow;
+  const workstreamName = reference?.name || "General collaboration";
+  const parts = splitDraft(cleaned);
+
+  const changed = findSection(parts, ["changed", "shipped", "finished", "updated", "made", "added", "fixed", "launched", "refined"], cleaned)
+    || fallbackFromSentence(parts, 0)
+    || `Updated ${workstreamName}.`;
+  const matters = findSection(parts, ["matters", "because", "impact", "so that", "why"], cleaned)
+    || inferMatters(parts)
+    || `It matters because cleaner collaboration around ${workstreamName} saves time and rework.`;
+  const blocker = findSection(parts, ["blocked", "blocker", "stuck", "risk", "issue", "dependency"], cleaned)
+    || detectBlocker(parts)
+    || "";
+  const waitingOn = detectWaitingOn(parts) || reference?.waitingOn || "";
+  const decisionNeeded = findSection(parts, ["decide", "decision", "choose", "confirm", "approval"], cleaned)
+    || detectDecision(parts)
+    || reference?.decisionNeeded
+    || "";
+  const nextStep = findSection(parts, ["next", "then", "plan", "will", "follow"], cleaned)
+    || detectNext(parts)
+    || reference?.nextStep
+    || "Name the next concrete move.";
+  const desiredOutcome = inferOutcome(parts) || reference?.desiredOutcome || `A clearer shared plan for ${workstreamName}.`;
+  const status: Status = blocker ? "blocked" : decisionNeeded ? "watch" : "active";
+  const energy: Energy = /deep|investigate|analy[sz]e|strategy|recommendation|exception/i.test(cleaned) ? "deep" : blocker ? "stuck" : "light";
+  const urgency = clamp(Math.round((reference?.urgency ?? 6) + (blocker ? 2 : 0) + (decisionNeeded ? 1 : 0)), 1, 10);
+  const impact = clamp(Math.round((reference?.impact ?? 6) + (/customer|launch|revenue|critical|tenant|auth|central/i.test(cleaned) ? 1 : 0)), 1, 10);
+  const confidence = clamp(Math.round((reference?.confidence ?? 6) - (/fuzzy|unclear|unsure|risk|unknown/i.test(cleaned) ? 2 : 0) - (blocker ? 1 : 0) + (/confirmed|resolved|shipped/i.test(cleaned) ? 1 : 0)), 1, 10);
+  const notes = cleaned || reference?.notes || "";
+
+  let score = 32;
+  const signals: string[] = [];
+  if (cleaned.length >= 60) score += 8;
+  if (changed) {
+    score += 14;
+    signals.push("change detected");
+  }
+  if (matters) {
+    score += 14;
+    signals.push("impact detected");
+  }
+  if (blocker) {
+    score += 10;
+    signals.push("blocker detected");
+  }
+  if (decisionNeeded) {
+    score += 10;
+    signals.push("decision request");
+  }
+  if (waitingOn) {
+    score += 6;
+    signals.push("dependency named");
+  }
+  if (nextStep && nextStep.length >= 20) {
+    score += 14;
+    signals.push("next step extracted");
+  }
+  if (cleaned.length > 550) score -= 8;
+  if (!cleaned) score = 18;
+  score = clamp(score, 18, 100);
+
+  const verdict = score >= 85 ? "sharp" : score >= 65 ? "usable" : "needs more signal";
+  const updateTitle = toTitle(changed, workstreamName);
+  const updateDetail = [
+    `What changed: ${normalizeSentence(changed)}`,
+    `Why it matters: ${normalizeSentence(matters)}`,
+    `Blocked by: ${normalizeSentence(blocker || "No blocker right now")}`,
+    `Exact next move: ${normalizeSentence(nextStep)}`,
+  ].join(" ");
+  const ask = waitingOn
+    ? `Likely ask: ${normalizeSentence(waitingOn)}`
+    : decisionNeeded
+      ? `Likely ask: ${normalizeSentence(decisionNeeded)}`
+      : `Likely ask: confirm whether ${workstreamName} still deserves current priority.`;
+  const decisionSuggestion = decisionNeeded
+    ? `Log a decision around this: ${normalizeSentence(decisionNeeded)}`
+    : blocker
+      ? `No clean decision request was written, but the blocker suggests David may need to choose a path or owner.`
+      : `No obvious decision request. This reads more like execution status than a choice point.`;
+  const cleanedBrief = [
+    `What changed: ${normalizeSentence(changed)}`,
+    `Why it matters: ${normalizeSentence(matters)}`,
+    `Blocked by: ${normalizeSentence(blocker || "No blocker right now")}`,
+    `Need from David: ${normalizeSentence(waitingOn || decisionNeeded || "No direct ask right now")}`,
+    `Exact next move: ${normalizeSentence(nextStep)}`,
+  ].join("\n");
+
+  return {
+    score,
+    verdict,
+    workstreamName,
+    signals: signals.length ? uniqueList(signals) : ["weak signal"],
+    suggestedPatch: {
+      status,
+      energy,
+      impact,
+      urgency,
+      confidence,
+      nextStep: normalizeSentence(nextStep),
+      blocker: blocker ? normalizeSentence(blocker) : "",
+      waitingOn: waitingOn ? normalizeSentence(waitingOn) : "",
+      desiredOutcome: normalizeSentence(desiredOutcome),
+      decisionNeeded: decisionNeeded ? normalizeSentence(decisionNeeded) : "",
+      notes,
+    },
+    updateTitle,
+    updateDetail,
+    decisionSuggestion,
+    ask,
+    cleanedBrief,
+  };
+}
+
+function detectBlocker(parts: string[]) {
+  return parts.find((part) => /(blocked|stuck|waiting on|dependency|can't|cannot|risk|issue)/i.test(part)) || "";
+}
+
+function detectWaitingOn(parts: string[]) {
+  return parts.find((part) => /(need david|waiting on|need from david|need approval|need input|need confirm|need confirmation|ask david)/i.test(part)) || "";
+}
+
+function detectDecision(parts: string[]) {
+  return parts.find((part) => /(decide|decision|choose|confirm whether|approval|go\/no-go|happy path|tradeoff)/i.test(part)) || "";
+}
+
+function detectNext(parts: string[]) {
+  return parts.find((part) => /(next|then i|next i|i will|plan is|follow up|turn that into|update plan)/i.test(part)) || "";
+}
+
+function inferMatters(parts: string[]) {
+  const explicit = parts.find((part) => /(reduce|save|improve|matters|impact|important|helps|unblocks)/i.test(part));
+  if (explicit) return explicit;
+  const first = parts[1];
+  return first && first.length >= 20 ? first : "";
+}
+
+function inferOutcome(parts: string[]) {
+  return parts.find((part) => /(outcome|so that|in order to|goal|result|recommendation|plan)/i.test(part)) || "";
+}
+
+function toTitle(changed: string, fallback: string) {
+  const cleaned = changed.replace(/^what changed:\s*/i, "").trim();
+  const short = cleaned.split(/[.!?]/)[0].trim();
+  if (!short) return `Update on ${fallback}`;
+  return short.length > 72 ? `${short.slice(0, 69).trimEnd()}...` : short;
 }
