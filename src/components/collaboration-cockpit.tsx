@@ -233,6 +233,35 @@ type InboxDistiller = {
   cleanedBrief: string;
 };
 
+type TranscriptAction = {
+  id: string;
+  owner: string;
+  task: string;
+  due: string;
+  urgency: "high" | "medium" | "low";
+  workstreamName: string;
+  why: string;
+};
+
+type TranscriptDecisionItem = {
+  id: string;
+  topic: string;
+  owner: string;
+  due: string;
+  recommendation: string;
+  impactArea: string;
+};
+
+type ConversationDigest = {
+  score: number;
+  summary: string;
+  nextSync: string;
+  actions: TranscriptAction[];
+  decisions: TranscriptDecisionItem[];
+  update: string;
+  createdWorkstream: Omit<Workstream, "id">;
+};
+
 const STORAGE_KEY = "collab-cockpit-v4";
 const LEGACY_KEYS = ["collab-cockpit-v3", "collab-cockpit-v2", "collab-cockpit-v1"];
 
@@ -372,6 +401,9 @@ export function CollaborationCockpit() {
   const [handoffDraft, setHandoffDraft] = useState(
     "Shipped a smarter collaboration coach in Collab Cockpit. It matters because the next sync can start from a sharper plan instead of improvising. No blocker right now. Next I'll test the live deployment and verify the login flow still behaves."
   );
+  const [transcriptDraft, setTranscriptDraft] = useState(
+    "David: Central onboarding is still muddy because auth exceptions keep leaking across docs. Albert: I can turn this into a tighter recommendation today, but I need David to confirm whether we optimize the happy path first. David: Yes, prioritize the happy path and write down the kill criteria for exception handling by Monday. Albert: Got it. I'll update the workstream, log the decision, and send a crisp async note after the draft is ready."
+  );
   const [newUpdate, setNewUpdate] = useState({
     title: "",
     detail: "",
@@ -455,6 +487,10 @@ export function CollaborationCockpit() {
   const inboxDistiller = useMemo(
     () => distillInboxDraft({ draft: inboxDraft, selected, focusNow }),
     [inboxDraft, selected, focusNow]
+  );
+  const conversationDigest = useMemo(
+    () => analyzeConversationTranscript({ draft: transcriptDraft, selected, focusNow }),
+    [transcriptDraft, selected, focusNow]
   );
   const latestSnapshot = state.snapshots[0];
   const healthDelta = latestSnapshot ? collaborationHealth - latestSnapshot.health : 0;
@@ -544,6 +580,38 @@ export function CollaborationCockpit() {
       ],
     }));
     setNewDecision({ topic: "", options: "", recommendation: "", confidence: 7, deadline: todayIso(), impactArea: "" });
+  }
+
+  function applyConversationDigest() {
+    const created = { ...conversationDigest.createdWorkstream, id: cryptoId() };
+    setState((current) => ({
+      ...current,
+      workstreams: [created, ...current.workstreams],
+      updates: [
+        {
+          id: cryptoId(),
+          title: `Transcript digest · ${conversationDigest.createdWorkstream.name}`,
+          detail: conversationDigest.update,
+          createdAt: todayIso(),
+          relatedWorkstream: conversationDigest.createdWorkstream.name,
+          type: "from-albert",
+        },
+        ...current.updates,
+      ],
+      decisions: [
+        ...conversationDigest.decisions.map((item) => ({
+          id: cryptoId(),
+          topic: item.topic,
+          options: `Owner: ${item.owner}`,
+          recommendation: item.recommendation,
+          confidence: 7,
+          deadline: item.due,
+          impactArea: item.impactArea,
+        })),
+        ...current.decisions,
+      ],
+    }));
+    setSelectedId(created.id);
   }
 
   function saveSnapshot() {
@@ -1221,6 +1289,85 @@ export function CollaborationCockpit() {
                 <button type="button" onClick={addDecision} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
                   Save decision
                 </button>
+              </div>
+            </Panel>
+
+            <Panel title="Conversation translator" subtitle="Paste a rough back-and-forth and turn it into a usable plan, action list, and decision log instead of re-reading the whole thread.">
+              <div className="grid gap-4">
+                <Field label="Transcript or chat thread">
+                  <textarea
+                    className={`${inputClass} min-h-44`}
+                    value={transcriptDraft}
+                    onChange={(e) => setTranscriptDraft(e.target.value)}
+                    placeholder="Paste a conversation between David, Albert, or anyone else."
+                  />
+                </Field>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Signal quality</p>
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                      <p className="text-3xl font-semibold tracking-tight text-slate-900">{conversationDigest.score}%</p>
+                      <Badge tone={conversationDigest.score >= 80 ? statusTone.active : conversationDigest.score >= 60 ? statusTone.watch : statusTone.blocked}>{conversationDigest.score >= 80 ? "sharp" : conversationDigest.score >= 60 ? "usable" : "thin"}</Badge>
+                    </div>
+                    <p className="mt-3 text-sm text-slate-600">{conversationDigest.summary}</p>
+                  </div>
+                  <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 md:col-span-2">
+                    <p className="text-sm font-semibold text-blue-900">Recommended next sync</p>
+                    <p className="mt-2 text-sm leading-6 text-blue-900/90">{conversationDigest.nextSync}</p>
+                    <textarea readOnly className={`${inputClass} mt-4 min-h-28 bg-white/80 font-mono text-sm`} value={conversationDigest.update} />
+                  </div>
+                </div>
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="text-sm font-semibold text-slate-900">Extracted actions</h3>
+                      <Badge>{conversationDigest.actions.length}</Badge>
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      {conversationDigest.actions.length ? conversationDigest.actions.map((item) => (
+                        <div key={item.id} className="rounded-2xl border border-slate-200 bg-white p-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone={nudgeTone[item.urgency]}>{item.urgency}</Badge>
+                            <Badge>{item.owner}</Badge>
+                            <Badge>{prettyDate(item.due)}</Badge>
+                          </div>
+                          <p className="mt-2 text-sm font-medium text-slate-900">{item.task}</p>
+                          <p className="mt-2 text-sm text-slate-600">{item.why}</p>
+                          <p className="mt-2 text-xs text-slate-500">Workstream: {item.workstreamName}</p>
+                        </div>
+                      )) : <p className="text-sm text-slate-500">No actions detected yet. Either the transcript is thin or everyone was just vibing.</p>}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="text-sm font-semibold text-slate-900">Decision candidates</h3>
+                      <Badge>{conversationDigest.decisions.length}</Badge>
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      {conversationDigest.decisions.length ? conversationDigest.decisions.map((item) => (
+                        <div key={item.id} className="rounded-2xl border border-slate-200 bg-white p-3">
+                          <p className="text-sm font-semibold text-slate-900">{item.topic}</p>
+                          <p className="mt-2 text-sm text-slate-600">{item.recommendation}</p>
+                          <p className="mt-2 text-xs text-slate-500">Owner: {item.owner} · due {prettyDate(item.due)} · area {item.impactArea}</p>
+                        </div>
+                      )) : <p className="text-sm text-slate-500">No explicit decision surfaced. Nice if true, unlikely if the work is real.</p>}
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  <p className="font-semibold">Suggested workstream</p>
+                  <p className="mt-2"><span className="font-medium">{conversationDigest.createdWorkstream.name}</span> · owner {conversationDigest.createdWorkstream.owner} · status {conversationDigest.createdWorkstream.status}</p>
+                  <p className="mt-2">Next step: {conversationDigest.createdWorkstream.nextStep}</p>
+                  <p className="mt-2">Decision needed: {conversationDigest.createdWorkstream.decisionNeeded || "No explicit decision captured."}</p>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <button type="button" onClick={() => copyText(conversationDigest.update, "transcript digest")} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                    Copy digest
+                  </button>
+                  <button type="button" onClick={applyConversationDigest} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                    Create workstream + decision items
+                  </button>
+                </div>
               </div>
             </Panel>
 
@@ -3018,6 +3165,143 @@ function distillInboxDraft({
     ask,
     cleanedBrief,
   };
+}
+
+function analyzeConversationTranscript({
+  draft,
+  selected,
+  focusNow,
+}: {
+  draft: string;
+  selected?: Workstream;
+  focusNow?: ScoredWorkstream;
+}): ConversationDigest {
+  const cleaned = draft.trim();
+  const reference = selected ?? focusNow;
+  const parts = splitDraft(cleaned);
+  const names = [...new Set((cleaned.match(/[A-Z][a-z]+(?=:)/g) || []).map((name) => name.trim()))];
+  const owner = names.find((name) => /David|Albert/i.test(name)) || reference?.owner || "Shared";
+  const otherParty = names.find((name) => name !== owner) || (owner === "David" ? "Albert" : "David");
+  const topicSeed = reference?.name || detectTopicFromTranscript(cleaned) || "Collaboration follow-up";
+  const decisionLine = detectDecision(parts);
+  const blocker = detectBlocker(parts);
+  const nextLine = detectNext(parts) || parts.find((part) => /(i'll|i will|we'll|we will|follow up|update|send|write|confirm|draft)/i.test(part)) || "Turn the thread into a sharper plan.";
+  const due = detectDueDate(cleaned);
+  const summary = cleaned
+    ? `${topicSeed} looks like the main thread. ${names.length ? `People detected: ${names.join(", ")}.` : "No speakers clearly named."}`
+    : "Paste a conversation and the translator will pull out the useful bits.";
+  const update = [
+    `What changed: ${normalizeSentence(parts[0] || `Reviewed the thread around ${topicSeed}`)}`,
+    `Why it matters: ${normalizeSentence(inferMatters(parts) || `The conversation changes how ${topicSeed} should move next.`)}`,
+    `Blocked by: ${normalizeSentence(blocker || "No blocker explicitly surfaced")}`,
+    `Need from David: ${normalizeSentence(cleaned.toLowerCase().includes("david") ? (decisionLine || detectWaitingOn(parts) || "Confirm the chosen direction") : "No direct ask right now")}`,
+    `Exact next move: ${normalizeSentence(nextLine)}`,
+  ].join("\n");
+
+  const actions: TranscriptAction[] = extractTranscriptActions(parts, topicSeed, due, owner, otherParty);
+  const decisions: TranscriptDecisionItem[] = decisionLine
+    ? [{
+        id: cryptoId(),
+        topic: toTitle(decisionLine, topicSeed),
+        owner: cleaned.toLowerCase().includes("david") ? "David" : owner,
+        due,
+        recommendation: normalizeSentence(decisionLine),
+        impactArea: topicSeed,
+      }]
+    : [];
+
+  let score = 34;
+  if (cleaned.length >= 120) score += 12;
+  if (names.length >= 2) score += 10;
+  if (actions.length) score += 18;
+  if (decisions.length) score += 12;
+  if (blocker) score += 6;
+  if (nextLine) score += 10;
+  score = clamp(score, 18, 100);
+
+  const topAction = actions[0];
+  const createdWorkstream: Omit<Workstream, "id"> = {
+    name: topicSeed,
+    owner: topAction?.owner || owner,
+    status: blocker ? "blocked" : decisions.length ? "watch" : "active",
+    energy: /strategy|analy[sz]e|recommend|exception|tradeoff|deep/i.test(cleaned) ? "deep" : blocker ? "stuck" : "light",
+    impact: clamp((reference?.impact ?? 6) + (decisions.length ? 1 : 0), 1, 10),
+    urgency: clamp((reference?.urgency ?? 6) + (blocker ? 2 : actions.length ? 1 : 0), 1, 10),
+    confidence: clamp((reference?.confidence ?? 6) - (blocker ? 1 : 0) + (decisions.length ? 1 : 0), 1, 10),
+    lastTouched: todayIso(),
+    nextStep: normalizeSentence(topAction?.task || nextLine),
+    blocker: blocker ? normalizeSentence(blocker) : "",
+    notes: cleaned,
+    waitingOn: cleaned.toLowerCase().includes("david") ? normalizeSentence(decisionLine || detectWaitingOn(parts) || "David confirmation on direction") : "",
+    desiredOutcome: normalizeSentence(inferOutcome(parts) || `A cleaner collaboration plan for ${topicSeed}`),
+    decisionNeeded: decisions[0]?.recommendation || "",
+  };
+
+  const nextSync = decisions.length
+    ? `Run a short decision sync on ${decisions[0].topic}, then push the rest async.`
+    : actions.length
+      ? `Skip a big meeting. Just confirm ownership on ${actions[0].task.toLowerCase()} and let the work move.`
+      : `The thread is still vague. Ask one clarifying question before it grows teeth.`;
+
+  return {
+    score,
+    summary,
+    nextSync,
+    actions,
+    decisions,
+    update,
+    createdWorkstream,
+  };
+}
+
+function extractTranscriptActions(parts: string[], topicSeed: string, due: string, owner: string, otherParty: string): TranscriptAction[] {
+  return parts
+    .filter((part) => /(i'll|i will|we'll|we will|follow up|update|send|write|confirm|draft|turn this into|log the decision|ship)/i.test(part))
+    .slice(0, 4)
+    .map((part, index) => {
+      const normalizedOwner = /^David:/i.test(part) ? "David" : /^Albert:/i.test(part) ? "Albert" : /david/i.test(part) ? "David" : /albert/i.test(part) ? "Albert" : index === 0 ? owner : otherParty;
+      const urgency: TranscriptAction["urgency"] = /today|asap|now|urgent|by monday/i.test(part) ? "high" : /this week|soon|tomorrow/i.test(part) ? "medium" : "low";
+      return {
+        id: cryptoId(),
+        owner: normalizedOwner,
+        task: normalizeSentence(stripSpeaker(part)),
+        due,
+        urgency,
+        workstreamName: topicSeed,
+        why: normalizeSentence(inferMatters(parts) || `This keeps ${topicSeed} from drifting back into chat sludge.`),
+      };
+    });
+}
+
+function detectTopicFromTranscript(text: string) {
+  const matches = text.match(/[A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,3}/g) || [];
+  const ranked = matches
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 8 && !/^(David|Albert|Monday|Tuesday|Wednesday|Thursday|Friday)$/i.test(item))
+    .sort((a, b) => b.length - a.length);
+  return ranked[0] || "";
+}
+
+function detectDueDate(text: string) {
+  const lowered = text.toLowerCase();
+  if (lowered.includes('today')) return todayIso();
+  if (lowered.includes('tomorrow')) return futureIso(1);
+  if (lowered.includes('next week') || lowered.includes('this week')) return futureIso(7);
+  const weekdays = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+  const now = new Date();
+  for (let i = 0; i < weekdays.length; i += 1) {
+    if (lowered.includes(weekdays[i])) {
+      const date = new Date(now);
+      const delta = (i - now.getDay() + 7) % 7 || 7;
+      date.setDate(now.getDate() + delta);
+      return date.toISOString().slice(0, 10);
+    }
+  }
+  return futureIso(3);
+}
+
+function stripSpeaker(text: string) {
+  return text.replace(/^[A-Z][a-z]+:\s*/, '').trim();
 }
 
 function detectBlocker(parts: string[]) {
