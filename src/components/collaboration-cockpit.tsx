@@ -186,6 +186,28 @@ type NudgeItem = {
   message: string;
 };
 
+type CollaboratorBrief = {
+  name: string;
+  score: number;
+  ownedCount: number;
+  waitingCount: number;
+  blockedCount: number;
+  staleCount: number;
+  workstreams: string[];
+  risk: string;
+  ask: string;
+  nextMove: string;
+  message: string;
+};
+
+type CollaboratorMap = {
+  briefs: CollaboratorBrief[];
+  headline: string;
+  copyBlock: string;
+  overloadedCount: number;
+  bottleneckCount: number;
+};
+
 type InboxDistiller = {
   score: number;
   verdict: string;
@@ -402,6 +424,7 @@ export function CollaborationCockpit() {
   const insights = useMemo(() => buildInsights(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const protocolPlanner = useMemo(() => buildProtocolPlanner(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const nudgeQueue = useMemo(() => buildNudgeQueue(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
+  const collaboratorMap = useMemo(() => buildCollaboratorMap(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const decisionSprint = useMemo(() => buildDecisionSprint(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const budgetPlan = useMemo(() => buildBudgetPlan(scoredWorkstreams, budget), [scoredWorkstreams, budget]);
   const interventionSimulations = useMemo(
@@ -752,6 +775,60 @@ export function CollaborationCockpit() {
                     <textarea readOnly className={`${inputClass} mt-4 min-h-28 bg-white/80 font-mono text-sm`} value={item.message} />
                   </div>
                 )) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">No active nudges. Either collaboration is unusually clean or the board is under-reporting pain.</p>}
+              </div>
+            </Panel>
+
+            <Panel title="Collaborator map" subtitle="Shows who is becoming a bottleneck, who is carrying too much, and what exact message would move the work.">
+              <div className="mb-4 grid gap-3 md:grid-cols-4">
+                <MetricCard label="People tracked" value={String(collaboratorMap.briefs.length)} note={collaboratorMap.briefs.length ? "Owners and dependencies pulled from the board" : "Need named owners or waiting states first"} />
+                <MetricCard label="Overloaded" value={String(collaboratorMap.overloadedCount)} note={collaboratorMap.overloadedCount ? "More than two active items or too much drag" : "No obvious load imbalance"} />
+                <MetricCard label="Bottlenecks" value={String(collaboratorMap.bottleneckCount)} note={collaboratorMap.bottleneckCount ? "People currently blocking meaningful work" : "No single person is jamming the board"} />
+                <MetricCard label="Top pressure" value={collaboratorMap.briefs[0] ? `${collaboratorMap.briefs[0].score}` : "—"} note={collaboratorMap.briefs[0] ? collaboratorMap.briefs[0].name : "No collaborator pressure yet"} />
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">Relationship pressure summary</h3>
+                    <p className="mt-1 text-sm text-slate-600">{collaboratorMap.headline}</p>
+                  </div>
+                  <button type="button" onClick={() => copyText(collaboratorMap.copyBlock, "collaborator map")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                    Copy collaborator map
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3">
+                {collaboratorMap.briefs.length ? collaboratorMap.briefs.map((person) => (
+                  <div key={person.name} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-sm font-semibold text-slate-900">{person.name}</h3>
+                          <Badge>{person.score} pressure</Badge>
+                          <Badge>{person.ownedCount} owned</Badge>
+                          <Badge>{person.waitingCount} dependencies</Badge>
+                          <Badge>{person.blockedCount} blocked</Badge>
+                        </div>
+                        <p className="mt-2 text-sm leading-6 text-slate-700">{person.risk}</p>
+                      </div>
+                      <button type="button" onClick={() => copyText(person.message, `${person.name} collaborator brief`)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                        Copy message
+                      </button>
+                    </div>
+                    <div className="mt-4 grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
+                      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+                        <MiniStat label="Owns" value={String(person.ownedCount)} />
+                        <MiniStat label="Waiting on" value={String(person.waitingCount)} />
+                        <MiniStat label="Stale items" value={String(person.staleCount)} />
+                      </div>
+                      <div className="space-y-3 text-sm text-slate-700">
+                        <p><span className="font-medium text-slate-900">Workstreams:</span> {person.workstreams.join(" · ")}</p>
+                        <p><span className="font-medium text-slate-900">Ask now:</span> {person.ask}</p>
+                        <p><span className="font-medium text-slate-900">Next move:</span> {person.nextMove}</p>
+                      </div>
+                    </div>
+                    <textarea readOnly className={`${inputClass} mt-4 min-h-28 bg-white font-mono text-sm`} value={person.message} />
+                  </div>
+                )) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">Name owners or waiting dependencies and this panel will start acting less like a guess.</p>}
               </div>
             </Panel>
 
@@ -1584,6 +1661,149 @@ function buildInsights(workstreams: ScoredWorkstream[], decisions: Decision[]): 
           tone: "blue",
         },
   ];
+}
+
+function buildCollaboratorMap(workstreams: ScoredWorkstream[], decisions: Decision[]): CollaboratorMap {
+  const map = new Map<string, CollaboratorBrief>();
+
+  const ensurePerson = (rawName: string) => {
+    const name = normalizePersonLabel(rawName);
+    if (!name) return null;
+    const existing = map.get(name);
+    if (existing) return existing;
+
+    const brief: CollaboratorBrief = {
+      name,
+      score: 0,
+      ownedCount: 0,
+      waitingCount: 0,
+      blockedCount: 0,
+      staleCount: 0,
+      workstreams: [],
+      risk: "No meaningful pressure detected yet.",
+      ask: "No direct ask yet.",
+      nextMove: "Keep the board honest and current.",
+      message: "",
+    };
+
+    map.set(name, brief);
+    return brief;
+  };
+
+  for (const item of workstreams) {
+    const owner = ensurePerson(item.owner);
+    if (owner) {
+      owner.ownedCount += 1;
+      owner.score += item.score;
+      if (item.status === "blocked") owner.blockedCount += 1;
+      if (item.ageDays >= 3) owner.staleCount += 1;
+      if (!owner.workstreams.includes(item.name)) owner.workstreams.push(item.name);
+    }
+
+    for (const dependencyName of splitPeople(item.waitingOn)) {
+      const dependency = ensurePerson(dependencyName);
+      if (!dependency) continue;
+      dependency.waitingCount += 1;
+      dependency.score += Math.round(item.drag * 0.7) + (item.status === "blocked" ? 8 : 0);
+      if (item.status === "blocked") dependency.blockedCount += 1;
+      if (item.ageDays >= 3) dependency.staleCount += 1;
+      if (!dependency.workstreams.includes(item.name)) dependency.workstreams.push(item.name);
+    }
+  }
+
+  for (const decision of decisions) {
+    const match = matchDecisionWorkstream(decision, workstreams);
+    const owner = ensurePerson(match?.owner || inferOwner(decision));
+    if (!owner) continue;
+    const overdue = isPast(decision.deadline);
+    owner.score += overdue ? 18 : 8;
+    if (overdue) owner.blockedCount += 1;
+    if (!owner.workstreams.includes(match?.name || decision.topic)) owner.workstreams.push(match?.name || decision.topic);
+  }
+
+  const briefs = [...map.values()]
+    .map((person) => {
+      const pressure = clamp(
+        Math.round(person.score * 0.28 + person.ownedCount * 8 + person.waitingCount * 10 + person.blockedCount * 12 + person.staleCount * 6),
+        12,
+        100
+      );
+      const topWorkstream = person.workstreams[0] || "the board";
+      const risk = person.blockedCount
+        ? `${person.name} is part of ${person.blockedCount} blocked path${person.blockedCount === 1 ? "" : "s"}. ${topWorkstream} is already paying for that.`
+        : person.waitingCount >= 2
+          ? `${person.name} is holding multiple dependencies at once. That is where polite silence turns into schedule drift.`
+          : person.ownedCount >= 3
+            ? `${person.name} owns a lot of active surface area. Useful, but also how coordination load hides.`
+            : `${person.name} is not on fire, but still shapes the tempo of ${topWorkstream}.`;
+      const ask = person.waitingCount
+        ? `Get a direct yes/no update on ${topWorkstream} and rewrite the dependency in concrete terms.`
+        : person.ownedCount >= 3
+          ? `Trim scope or decide what ${person.name} should stop carrying this week.`
+          : `Confirm the next step and owner for ${topWorkstream} so the work stops floating.`;
+      const nextMove = person.blockedCount
+        ? `Send a tight unblock note today. If there is no answer, escalate the decision owner instead of waiting gracefully.`
+        : person.staleCount
+          ? `Refresh the state of ${topWorkstream} before it turns into fake progress.`
+          : `Keep ${person.name} in async mode unless a real decision is needed.`;
+      const message = [
+        `${person.name} — quick collab check`,
+        "",
+        `You're currently tied to ${person.workstreams.slice(0, 3).join(", ") || "the current board"}.`,
+        `Main risk: ${risk}`,
+        `What would help now: ${ask}`,
+        `Suggested next move: ${nextMove}`,
+      ].join("\n");
+
+      return {
+        ...person,
+        score: pressure,
+        risk,
+        ask,
+        nextMove,
+        workstreams: person.workstreams.slice(0, 4),
+        message,
+      } satisfies CollaboratorBrief;
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 6);
+
+  const overloadedCount = briefs.filter((person) => person.ownedCount >= 3 || person.score >= 70).length;
+  const bottleneckCount = briefs.filter((person) => person.waitingCount >= 2 || person.blockedCount >= 1).length;
+  const headline = briefs.length
+    ? `${briefs[0].name} is carrying the most collaboration pressure right now. ${briefs[0].ask}`
+    : "No named collaborators yet. The board needs real owners and dependency names before this becomes useful.";
+  const copyBlock = briefs.length
+    ? [
+        "COLLABORATOR MAP",
+        "",
+        headline,
+        "",
+        ...briefs.map((person, index) => `${index + 1}. ${person.name} — ${person.score} pressure — ${person.ask} — next: ${person.nextMove}`),
+      ].join("\n")
+    : headline;
+
+  return {
+    briefs,
+    headline,
+    copyBlock,
+    overloadedCount,
+    bottleneckCount,
+  };
+}
+
+function normalizePersonLabel(value: string) {
+  const cleaned = value.replace(/\([^)]*\)/g, " ").replace(/\b(team|shared|general|nobody|none|unknown)\b/gi, " ").trim();
+  if (!cleaned) return "";
+  const first = cleaned.split(/[\/,&]|\band\b/gi)[0]?.trim() ?? "";
+  return first.replace(/^@/, "").trim();
+}
+
+function splitPeople(value: string) {
+  return value
+    .split(/[\n,\/;&]+|\band\b/gi)
+    .map((part) => normalizePersonLabel(part))
+    .filter(Boolean);
 }
 
 function buildDecisionSprint(workstreams: ScoredWorkstream[], decisions: Decision[]) {

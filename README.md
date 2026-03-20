@@ -10,6 +10,7 @@ A lightweight collaboration cockpit for David and Albert.
 - Adds a collaboration coach that turns board state into direct asks, quick-sync prep, async handoffs, and an execution plan for Albert
 - Adds an inbox distiller that turns messy pasted notes into a structured update, likely blocker/decision/ask, and a suggested workstream patch
 - Adds a protocol planner that recommends which work deserves async handling, a quick sync, a deep dive, or a decision review
+- Adds a collaborator map that spots who is overloaded, who is bottlenecking execution, and drafts exact outreach for each person
 - Adds a what-if simulator that compares likely interventions before David and Albert spend real time on them
 - Builds a concrete 7-day collaboration plan from the current board state
 - Tracks decisions, recent updates, blockers, and explicit asks in one place
