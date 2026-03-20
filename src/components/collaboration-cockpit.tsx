@@ -84,6 +84,19 @@ type BudgetPlan = {
   contract: string;
 };
 
+type InterventionSimulation = {
+  id: string;
+  title: string;
+  premise: string;
+  deltaHealth: number;
+  deltaBlocked: number;
+  deltaDeep: number;
+  deltaSync: number;
+  nextFocus: string;
+  summary: string;
+  exactMove: string;
+};
+
 type AppState = {
   workstreams: Workstream[];
   updates: Update[];
@@ -371,6 +384,10 @@ export function CollaborationCockpit() {
   const protocolPlanner = useMemo(() => buildProtocolPlanner(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const nudgeQueue = useMemo(() => buildNudgeQueue(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const budgetPlan = useMemo(() => buildBudgetPlan(scoredWorkstreams, budget), [scoredWorkstreams, budget]);
+  const interventionSimulations = useMemo(
+    () => buildInterventionSimulations({ workstreams: state.workstreams, decisions: state.decisions, budget }),
+    [state.workstreams, state.decisions, budget]
+  );
   const coachPlan = useMemo(
     () => buildCoachPlan({ mode: coachMode, focusNow, selected, decisions: state.decisions, updates: state.updates }),
     [coachMode, focusNow, selected, state.decisions, state.updates]
@@ -754,6 +771,35 @@ export function CollaborationCockpit() {
                     Copy budget contract
                   </button>
                 </div>
+              </div>
+            </Panel>
+
+            <Panel title="What-if simulator" subtitle="Pressure-tests the next move before you spend real time on it. This is the anti-thrash panel.">
+              <div className="grid gap-3 lg:grid-cols-2">
+                {interventionSimulations.map((simulation) => (
+                  <div key={simulation.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <h3 className="font-semibold text-slate-900">{simulation.title}</h3>
+                        <p className="text-sm text-slate-600">{simulation.premise}</p>
+                      </div>
+                      <Badge tone={simulation.deltaHealth > 0 ? "emerald" : simulation.deltaHealth < 0 ? "rose" : "blue"}>
+                        {simulation.deltaHealth > 0 ? "+" : ""}
+                        {simulation.deltaHealth} health
+                      </Badge>
+                    </div>
+                    <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2 xl:grid-cols-4">
+                      <MiniStat label="Blocked delta" value={`${simulation.deltaBlocked > 0 ? "+" : ""}${simulation.deltaBlocked}`} />
+                      <MiniStat label="Deep delta" value={`${simulation.deltaDeep > 0 ? "+" : ""}${simulation.deltaDeep}h`} />
+                      <MiniStat label="Sync delta" value={`${simulation.deltaSync > 0 ? "+" : ""}${simulation.deltaSync}m`} />
+                      <MiniStat label="Next focus" value={simulation.nextFocus} />
+                    </div>
+                    <p className="mt-3 text-sm text-slate-700">{simulation.summary}</p>
+                    <p className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700">
+                      <span className="font-medium text-slate-900">Exact move:</span> {simulation.exactMove}
+                    </p>
+                  </div>
+                ))}
               </div>
             </Panel>
 
@@ -1945,6 +1991,177 @@ function recommendProtocol(item: ScoredWorkstream): ProtocolRecommendation {
   };
 }
 
+
+function buildInterventionSimulations({
+  workstreams,
+  decisions,
+  budget,
+}: {
+  workstreams: Workstream[];
+  decisions: Decision[];
+  budget: Budget;
+}): InterventionSimulation[] {
+  const baselineScored = scoreWorkstreams(workstreams);
+  const baselineHealth = collaborationHealthScore(baselineScored, decisions);
+  const baselineBlocked = workstreams.filter((item) => item.status === "blocked").length;
+
+  const scenarios = [
+    {
+      id: "clear-top-blocker",
+      title: "Clear the top blocker",
+      premise: "Assume David and Albert spend one clean pass removing the ugliest dependency on the most important item.",
+      run: () => {
+        const target = workstreams.find((item) => item.status === "blocked" || item.blocker.trim() || item.waitingOn.trim()) ?? workstreams[0];
+        const nextWorkstreams: Workstream[] = workstreams.map((item) =>
+          item.id === target?.id
+            ? {
+                ...item,
+                status: (item.status === "done" ? "done" : "active") as Status,
+                blocker: "",
+                waitingOn: "",
+                confidence: clamp(item.confidence + 2, 1, 10),
+                lastTouched: todayIso(),
+              }
+            : item
+        );
+        return {
+          workstreams: scoreWorkstreams(nextWorkstreams),
+          decisions,
+          budget,
+          exactMove: target
+            ? `Book 20 minutes to resolve "${target.name}". Leave with one owner, no blocker text, and a rewritten next step.`
+            : "Add one real workstream first.",
+        };
+      },
+    },
+    {
+      id: "decision-sprint",
+      title: "Run a decision sprint",
+      premise: "Assume one short decision review kills overdue ambiguity instead of letting it poison the week.",
+      run: () => {
+        const nextDecisions = decisions.map((item, index) =>
+          index < 2
+            ? { ...item, deadline: futureIso(3) }
+            : item
+        );
+        const nextWorkstreams: Workstream[] = workstreams.map((item, index) =>
+          index < 2 && item.decisionNeeded.trim()
+            ? {
+                ...item,
+                confidence: clamp(item.confidence + 1, 1, 10),
+                status: (item.status === "watch" ? "active" : item.status) as Status,
+                lastTouched: todayIso(),
+              }
+            : item
+        );
+        return {
+          workstreams: scoreWorkstreams(nextWorkstreams),
+          decisions: nextDecisions,
+          budget: { ...budget, syncMinutes: budget.syncMinutes + 20 },
+          exactMove: "Hold a 20-minute decision review on the two oldest open calls. End with a yes/no and a dated owner for follow-through.",
+        };
+      },
+    },
+    {
+      id: "protect-deep-work",
+      title: "Protect deep work",
+      premise: "Assume Albert gets real maker time back and one meeting disappears instead of chewing the calendar.",
+      run: () => {
+        const target = workstreams.find((item) => item.energy === "deep") ?? workstreams[0];
+        const nextWorkstreams = workstreams.map((item) =>
+          item.id === target?.id
+            ? {
+                ...item,
+                confidence: clamp(item.confidence + 1, 1, 10),
+                nextStep:
+                  item.nextStep.trim().length >= 24
+                    ? item.nextStep
+                    : "Protect a 90-minute block and use it to finish the next concrete deliverable without context switching.",
+                lastTouched: todayIso(),
+              }
+            : item
+        );
+        return {
+          workstreams: scoreWorkstreams(nextWorkstreams),
+          decisions,
+          budget: { ...budget, deepHours: budget.deepHours + 3, syncMinutes: Math.max(0, budget.syncMinutes - 15) },
+          exactMove: target
+            ? `Protect three extra deep-work hours for "${target.name}" and cancel one low-yield sync.`
+            : "Protect a block for the top item.",
+        };
+      },
+    },
+    {
+      id: "async-cleanup",
+      title: "Async cleanup sweep",
+      premise: "Assume the messy handoffs get cleaned up before the next sync, so the meeting stops doing async work badly.",
+      run: () => {
+        const nextWorkstreams = workstreams.map((item, index) =>
+          index < 3
+            ? {
+                ...item,
+                nextStep:
+                  item.nextStep.trim().length >= 24
+                    ? item.nextStep
+                    : `Send a crisp async update for ${item.name} with changed, why it matters, blocker, and exact next move.`,
+                desiredOutcome: item.desiredOutcome || `A clean handoff and one obvious next move for ${item.name}.`,
+                lastTouched: todayIso(),
+              }
+            : item
+        );
+        return {
+          workstreams: scoreWorkstreams(nextWorkstreams),
+          decisions,
+          budget: { ...budget, lightHours: budget.lightHours + 1, syncMinutes: Math.max(0, budget.syncMinutes - 10) },
+          exactMove: "Do a 15-minute async cleanup on the top three workstreams, then use the meeting only for decisions that still need a human call.",
+        };
+      },
+    },
+  ];
+
+  return scenarios
+    .map((scenario) => {
+      const result = scenario.run();
+      const nextHealth = collaborationHealthScore(result.workstreams, result.decisions);
+      const nextBlocked = result.workstreams.filter((item) => item.status === "blocked").length;
+      const nextFocus = result.workstreams[0]?.name ?? "No workstreams";
+      const deltaHealth = nextHealth - baselineHealth;
+      const deltaBlocked = nextBlocked - baselineBlocked;
+      const deltaDeep = result.budget.deepHours - budget.deepHours;
+      const deltaSync = result.budget.syncMinutes - budget.syncMinutes;
+      return {
+        id: scenario.id,
+        title: scenario.title,
+        premise: scenario.premise,
+        deltaHealth,
+        deltaBlocked,
+        deltaDeep,
+        deltaSync,
+        nextFocus,
+        summary:
+          deltaHealth > 0
+            ? `${scenario.title} improves collaboration health by ${deltaHealth} points and leaves ${nextFocus} on top.`
+            : deltaHealth < 0
+              ? `${scenario.title} makes the system worse by ${Math.abs(deltaHealth)} points. Nice theory, bad trade.`
+              : `${scenario.title} barely moves the score, so only do it if the human context makes it worth it.`,
+        exactMove: result.exactMove,
+      };
+    })
+    .sort((a, b) => b.deltaHealth - a.deltaHealth);
+}
+
+function scoreWorkstreams(workstreams: Workstream[]): ScoredWorkstream[] {
+  return [...workstreams]
+    .map((item) => ({
+      ...item,
+      score: priorityScore(item),
+      ageDays: daysSince(item.lastTouched),
+      readiness: readinessScore(item),
+      drag: collaborationDrag(item),
+    }))
+    .sort((a, b) => b.score - a.score);
+}
+
 function buildBudgetPlan(workstreams: ScoredWorkstream[], budget: Budget): BudgetPlan {
   const allocations = workstreams
     .filter((item) => item.status !== "done")
@@ -2161,6 +2378,12 @@ function todayIso() {
 function isoDaysAgo(daysAgo: number) {
   const date = new Date();
   date.setDate(date.getDate() - daysAgo);
+  return date.toISOString().slice(0, 10);
+}
+
+function futureIso(daysAhead: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + daysAhead);
   return date.toISOString().slice(0, 10);
 }
 
