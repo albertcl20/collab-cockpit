@@ -208,6 +208,22 @@ type CollaboratorMap = {
   bottleneckCount: number;
 };
 
+type CollaboratorPrepPack = {
+  collaborator: string;
+  headline: string;
+  temperature: "steady" | "warm" | "hot";
+  workstreams: string[];
+  openWith: string;
+  appreciate: string;
+  pressure: string;
+  ask: string;
+  agenda: string[];
+  watchouts: string[];
+  followThrough: string[];
+  note: string;
+  copyBlock: string;
+};
+
 type InboxDistiller = {
   score: number;
   verdict: string;
@@ -392,6 +408,7 @@ export function CollaborationCockpit() {
   const [selectedId, setSelectedId] = useState<string>(bootState.workstreams[0]?.id ?? "");
   const [briefMode, setBriefMode] = useState<BriefMode>("alignment-agenda");
   const [coachMode, setCoachMode] = useState<CoachMode>("quick-sync");
+  const [selectedCollaborator, setSelectedCollaborator] = useState("David");
   const [snapshotNote, setSnapshotNote] = useState("");
   const [copyState, setCopyState] = useState<string>("");
   const [budget, setBudget] = useState<Budget>({ deepHours: 6, lightHours: 4, syncMinutes: 45 });
@@ -457,6 +474,10 @@ export function CollaborationCockpit() {
   const protocolPlanner = useMemo(() => buildProtocolPlanner(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const nudgeQueue = useMemo(() => buildNudgeQueue(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const collaboratorMap = useMemo(() => buildCollaboratorMap(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
+  const collaboratorPrepPack = useMemo(
+    () => buildCollaboratorPrepPack({ briefs: collaboratorMap.briefs, workstreams: scoredWorkstreams, decisions: state.decisions, collaborator: selectedCollaborator }),
+    [collaboratorMap.briefs, scoredWorkstreams, state.decisions, selectedCollaborator]
+  );
   const decisionSprint = useMemo(() => buildDecisionSprint(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const budgetPlan = useMemo(() => buildBudgetPlan(scoredWorkstreams, budget), [scoredWorkstreams, budget]);
   const interventionSimulations = useMemo(
@@ -494,6 +515,12 @@ export function CollaborationCockpit() {
   );
   const latestSnapshot = state.snapshots[0];
   const healthDelta = latestSnapshot ? collaborationHealth - latestSnapshot.health : 0;
+
+  useEffect(() => {
+    if (!collaboratorMap.briefs.length) return;
+    if (collaboratorMap.briefs.some((item) => item.name === selectedCollaborator)) return;
+    setSelectedCollaborator(collaboratorMap.briefs[0]?.name ?? "David");
+  }, [collaboratorMap.briefs, selectedCollaborator]);
 
   function updateWorkstream(id: string, patch: Partial<Workstream>) {
     setState((current) => ({
@@ -897,6 +924,73 @@ export function CollaborationCockpit() {
                     <textarea readOnly className={`${inputClass} mt-4 min-h-28 bg-white font-mono text-sm`} value={person.message} />
                   </div>
                 )) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">Name owners or waiting dependencies and this panel will start acting less like a guess.</p>}
+              </div>
+            </Panel>
+
+            <Panel title="1:1 prep pack" subtitle="Turns collaborator pressure into a calm, specific conversation plan so David can walk into a sync already knowing the opening, ask, and follow-through.">
+              <div className="grid gap-4">
+                <div className="grid gap-3 md:grid-cols-[0.9fr_1.1fr_1.1fr_1.1fr]">
+                  <Field label="Collaborator">
+                    <select className={inputClass} value={selectedCollaborator} onChange={(e) => setSelectedCollaborator(e.target.value)}>
+                      {collaboratorMap.briefs.map((person) => (
+                        <option key={person.name} value={person.name}>{person.name}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <MetricCard label="Temperature" value={collaboratorPrepPack.temperature} note={collaboratorPrepPack.headline} />
+                  <MetricCard label="Workstreams" value={String(collaboratorPrepPack.workstreams.length)} note={collaboratorPrepPack.workstreams.join(" · ") || "No linked workstreams yet"} />
+                  <MetricCard label="Watchouts" value={String(collaboratorPrepPack.watchouts.length)} note={collaboratorPrepPack.watchouts[0] ?? "No obvious watchout"} />
+                </div>
+
+                <div className={`rounded-2xl border p-4 ${collaboratorPrepPack.temperature === "hot" ? "border-rose-200 bg-rose-50 text-rose-900" : collaboratorPrepPack.temperature === "warm" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`}>
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">Opening move for {collaboratorPrepPack.collaborator}</p>
+                      <p className="mt-2 text-sm leading-6 opacity-90">{collaboratorPrepPack.openWith}</p>
+                    </div>
+                    <button type="button" onClick={() => copyText(collaboratorPrepPack.copyBlock, `${collaboratorPrepPack.collaborator} prep pack`)} className="rounded-xl border border-white/70 bg-white/80 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-white">
+                      Copy prep pack
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">What to say in the room</p>
+                      <div className="mt-3 grid gap-3 text-sm text-slate-700">
+                        <p><span className="font-medium text-slate-900">Appreciate:</span> {collaboratorPrepPack.appreciate}</p>
+                        <p><span className="font-medium text-slate-900">Pressure to name:</span> {collaboratorPrepPack.pressure}</p>
+                        <p><span className="font-medium text-slate-900">Ask directly:</span> {collaboratorPrepPack.ask}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Agenda</p>
+                      <ul className="mt-3 space-y-2 text-sm text-slate-700">
+                        {collaboratorPrepPack.agenda.map((item) => <li key={item}>• {item}</li>)}
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Watchouts</p>
+                      <ul className="mt-3 space-y-2 text-sm text-slate-700">
+                        {collaboratorPrepPack.watchouts.map((item) => <li key={item}>• {item}</li>)}
+                      </ul>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Follow-through</p>
+                      <ul className="mt-3 space-y-2 text-sm text-slate-700">
+                        {collaboratorPrepPack.followThrough.map((item) => <li key={item}>• {item}</li>)}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                <Field label="Copy-ready note">
+                  <textarea readOnly className={`${inputClass} min-h-60 font-mono text-sm`} value={collaboratorPrepPack.note} />
+                </Field>
               </div>
             </Panel>
 
@@ -1936,6 +2030,122 @@ function buildCollaboratorMap(workstreams: ScoredWorkstream[], decisions: Decisi
     copyBlock,
     overloadedCount,
     bottleneckCount,
+  };
+}
+
+function buildCollaboratorPrepPack({
+  briefs,
+  workstreams,
+  decisions,
+  collaborator,
+}: {
+  briefs: CollaboratorBrief[];
+  workstreams: ScoredWorkstream[];
+  decisions: Decision[];
+  collaborator: string;
+}): CollaboratorPrepPack {
+  const brief = briefs.find((item) => item.name === collaborator) ?? briefs[0];
+  const fallbackName = collaborator || brief?.name || "David";
+  const linkedWorkstreams = workstreams.filter(
+    (item) => normalizePersonLabel(item.owner) === fallbackName || splitPeople(item.waitingOn).includes(fallbackName)
+  );
+  const linkedDecisions = decisions.filter((decision) => {
+    const match = matchDecisionWorkstream(decision, workstreams);
+    return normalizePersonLabel(match?.owner || inferOwner(decision)) === fallbackName;
+  });
+
+  if (!brief) {
+    const emptyNote = [
+      `1:1 PREP — ${fallbackName}`,
+      "",
+      "No collaborator signal yet.",
+      "Name owners and waiting dependencies in the board, then this pack gets useful fast.",
+    ].join("\n");
+
+    return {
+      collaborator: fallbackName,
+      headline: "No collaborator signal yet.",
+      temperature: "steady",
+      workstreams: [],
+      openWith: `Open by clarifying what ${fallbackName} actually owns or influences right now.`,
+      appreciate: `Acknowledge any recent movement before asking for more detail.`,
+      pressure: "There is not enough structured signal yet.",
+      ask: `Name one concrete outcome and one next owner.`,
+      agenda: ["Clarify scope", "Name the next step", "Capture the owner"],
+      watchouts: ["The board is too vague for a sharper prep pack."],
+      followThrough: ["Update the workstream owner and waiting fields after the conversation."],
+      note: emptyNote,
+      copyBlock: emptyNote,
+    };
+  }
+
+  const hottestWorkstream = linkedWorkstreams[0] ?? workstreams.find((item) => item.name === brief.workstreams[0]);
+  const overdueDecision = linkedDecisions.find((item) => isPast(item.deadline));
+  const temperature: CollaboratorPrepPack["temperature"] = brief.score >= 75 || brief.blockedCount >= 2 ? "hot" : brief.score >= 50 || brief.waitingCount >= 2 ? "warm" : "steady";
+  const openWith = brief.blockedCount
+    ? `Open calmly: “I want to clear the blocked path around ${hottestWorkstream?.name || brief.workstreams[0] || "the current work"} so we leave with one decision and one owner.”`
+    : `Open simply: “I want to make ${hottestWorkstream?.name || brief.workstreams[0] || "this work"} easier to move without another fuzzy follow-up.”`;
+  const appreciate = hottestWorkstream
+    ? `${brief.name} is already carrying ${brief.ownedCount} thread${brief.ownedCount === 1 ? "" : "s"}. Acknowledge the movement on ${hottestWorkstream.name} before pushing on the constraint.`
+    : `${brief.name} is shaping the tempo of current work. Start with what is already moving, not just what is missing.`;
+  const pressure = overdueDecision
+    ? `There is overdue decision drag around ${overdueDecision.topic}. That risk is now bigger than the discomfort of naming it directly.`
+    : brief.risk;
+  const ask = overdueDecision
+    ? `Ask for a yes/no decision on ${overdueDecision.topic} or a hard date for when that call gets made.`
+    : brief.ask;
+  const agenda = [
+    `Start with the shared outcome for ${hottestWorkstream?.name || brief.workstreams[0] || "the main thread"}.`,
+    ask,
+    hottestWorkstream?.waitingOn
+      ? `Rewrite the dependency on ${hottestWorkstream.waitingOn} into one concrete deliverable.`
+      : `Confirm the next step, owner, and date before ending the sync.`,
+  ];
+  const watchouts = [
+    brief.waitingCount ? `Do not leave with “I'll look into it.” Convert it into a dated next step.` : `Do not let the conversation stay overly polite and vague.`,
+    hottestWorkstream?.notes ? `Avoid reopening every side-thread in ${hottestWorkstream.name}. Keep the conversation on the next unblock.` : `Avoid pulling new scope into the conversation.`,
+    brief.blockedCount ? `If the blocker is really a decision, stop treating it like a status update.` : `If this drifts into storytelling, pull it back to owners and timing.`,
+  ];
+  const followThrough = [
+    `Update ${hottestWorkstream?.name || brief.workstreams[0] || "the board"} immediately after the sync.`,
+    `Send the recap to ${brief.name} while the conversation is still fresh.`,
+    overdueDecision ? `Log the decision outcome or revised deadline for ${overdueDecision.topic}.` : `Capture the agreed next step so it does not dissolve into memory.`,
+  ];
+  const note = [
+    `1:1 PREP — ${brief.name}`,
+    "",
+    `Temperature: ${temperature}`,
+    `Workstreams: ${(linkedWorkstreams.map((item) => item.name).slice(0, 4).join(", ") || brief.workstreams.join(", ") || "None named yet")}`,
+    "",
+    `Open with: ${openWith}`,
+    `Appreciate: ${appreciate}`,
+    `Pressure to name: ${pressure}`,
+    `Direct ask: ${ask}`,
+    "",
+    "Agenda:",
+    ...agenda.map((item, index) => `${index + 1}. ${item}`),
+    "",
+    "Watchouts:",
+    ...watchouts.map((item) => `- ${item}`),
+    "",
+    "Follow-through:",
+    ...followThrough.map((item) => `- ${item}`),
+  ].join("\n");
+
+  return {
+    collaborator: brief.name,
+    headline: `${brief.name} needs a ${temperature === "hot" ? "tight unblock conversation" : temperature === "warm" ? "clear alignment pass" : "light maintenance sync"}.`,
+    temperature,
+    workstreams: linkedWorkstreams.map((item) => item.name).slice(0, 4),
+    openWith,
+    appreciate,
+    pressure,
+    ask,
+    agenda,
+    watchouts,
+    followThrough,
+    note,
+    copyBlock: note,
   };
 }
 
