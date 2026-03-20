@@ -251,6 +251,25 @@ type CollaboratorPrepPack = {
   copyBlock: string;
 };
 
+type CollaborationRetroItem = {
+  id: string;
+  title: string;
+  severity: "high" | "medium" | "low";
+  evidence: string;
+  systemFix: string;
+  experiment: string;
+};
+
+type CollaborationRetro = {
+  score: number;
+  headline: string;
+  strongestSignal: string;
+  items: CollaborationRetroItem[];
+  working: string[];
+  experimentPlan: string;
+  copyBlock: string;
+};
+
 type InboxDistiller = {
   score: number;
   verdict: string;
@@ -512,6 +531,10 @@ export function CollaborationCockpit() {
   const collaboratorPrepPack = useMemo(
     () => buildCollaboratorPrepPack({ briefs: collaboratorMap.briefs, workstreams: scoredWorkstreams, decisions: state.decisions, collaborator: selectedCollaborator }),
     [collaboratorMap.briefs, scoredWorkstreams, state.decisions, selectedCollaborator]
+  );
+  const collaborationRetro = useMemo(
+    () => buildCollaborationRetro({ workstreams: scoredWorkstreams, decisions: state.decisions, snapshots: state.snapshots, collaboratorMap }),
+    [scoredWorkstreams, state.decisions, state.snapshots, collaboratorMap]
   );
   const decisionSprint = useMemo(() => buildDecisionSprint(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const budgetPlan = useMemo(() => buildBudgetPlan(scoredWorkstreams, budget), [scoredWorkstreams, budget]);
@@ -1359,6 +1382,44 @@ export function CollaborationCockpit() {
               </div>
             </Panel>
 
+            <Panel title="Collaboration retro" subtitle="Finds the recurring pattern that keeps making collaboration more expensive, then suggests a fix worth testing instead of just admiring the mess.">
+              <div className="grid gap-4">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <MetricCard label="Retro score" value={`${collaborationRetro.score}%`} note={collaborationRetro.headline} />
+                  <MetricCard label="Patterns found" value={String(collaborationRetro.items.length)} note={collaborationRetro.strongestSignal} />
+                  <MetricCard label="What's working" value={String(collaborationRetro.working.length)} note={collaborationRetro.working[0] ?? "Nothing strong yet"} />
+                  <MetricCard label="Next experiment" value={collaborationRetro.items[0]?.severity ?? "steady"} note={collaborationRetro.items[0]?.title ?? "No big retro item"} />
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">Two-week experiment plan</h3>
+                      <p className="mt-1 text-sm text-slate-600">{collaborationRetro.headline}</p>
+                    </div>
+                    <button type="button" onClick={() => copyText(collaborationRetro.copyBlock, "retro plan")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                      Copy retro plan
+                    </button>
+                  </div>
+                  <textarea readOnly className={`${inputClass} mt-4 min-h-56 bg-white font-mono text-sm`} value={collaborationRetro.experimentPlan} />
+                </div>
+
+                <div className="grid gap-3 xl:grid-cols-2">
+                  {collaborationRetro.items.map((item) => (
+                    <div key={item.id} className={`rounded-2xl border p-4 ${nudgeTone[item.severity === "high" ? "high" : item.severity === "medium" ? "medium" : "low"]}`}>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <h3 className="text-sm font-semibold">{item.title}</h3>
+                        <Badge tone="border-white/70 bg-white/70 text-slate-700">{item.severity} signal</Badge>
+                      </div>
+                      <p className="mt-3 text-sm leading-6 opacity-90"><span className="font-medium">Evidence:</span> {item.evidence}</p>
+                      <p className="mt-3 text-sm leading-6 opacity-90"><span className="font-medium">System fix:</span> {item.systemFix}</p>
+                      <p className="mt-3 rounded-2xl border border-white/70 bg-white/80 px-3 py-3 text-sm opacity-95"><span className="font-medium">Experiment:</span> {item.experiment}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Panel>
+
             <Panel title="Decision sprint" subtitle="Turns decision drift into one crisp call, memo, and next move instead of ambient ambiguity.">
               <div className="grid gap-4">
                 <div className="grid gap-3 md:grid-cols-3">
@@ -2112,6 +2173,141 @@ function buildCollaboratorMap(workstreams: ScoredWorkstream[], decisions: Decisi
     overloadedCount,
     bottleneckCount,
   };
+}
+
+function buildCollaborationRetro({
+  workstreams,
+  decisions,
+  snapshots,
+  collaboratorMap,
+}: {
+  workstreams: ScoredWorkstream[];
+  decisions: Decision[];
+  snapshots: Snapshot[];
+  collaboratorMap: CollaboratorMap;
+}): CollaborationRetro {
+  const items: CollaborationRetroItem[] = [];
+  const blockedCount = workstreams.filter((item) => item.status === "blocked").length;
+  const staleCount = workstreams.filter((item) => item.ageDays >= 3).length;
+  const decisionDebt = decisions.filter((item) => isPast(item.deadline)).length;
+  const overloadedPeople = collaboratorMap.briefs.filter((item) => item.score >= 70 || item.ownedCount >= 3);
+  const healthSeries = [...snapshots].slice(0, 4).map((item) => item.health);
+  const currentHealth = collaborationHealthScore(workstreams, decisions);
+  const baselineHealth = healthSeries[0] ?? currentHealth;
+  const trendDelta = currentHealth - baselineHealth;
+
+  if (blockedCount) {
+    items.push({
+      id: "retro-blockers",
+      title: "Blockers are surviving too long",
+      severity: blockedCount >= 2 ? "high" : "medium",
+      evidence: `${blockedCount} workstream${blockedCount === 1 ? " is" : "s are"} currently blocked, and the board still depends on polite waiting more than explicit unblock ownership.`,
+      systemFix: "Add a 24-hour unblock rule: every blocked item needs one named owner, one escalation path, and one fallback focus.",
+      experiment: "For the next 2 weeks, rewrite every blocked item into owner / decision / fallback within the same day it becomes blocked.",
+    });
+  }
+
+  if (staleCount >= 2) {
+    items.push({
+      id: "retro-stale",
+      title: "Important work is going stale",
+      severity: staleCount >= 3 ? "high" : "medium",
+      evidence: `${staleCount} active workstream${staleCount === 1 ? " has" : "s have"} gone stale. That usually means the handoff format is too vague or the review rhythm is too loose.`,
+      systemFix: "Use a twice-weekly cleanup pass on the top stack so next step, owner, and desired outcome stay sharper than chat memory.",
+      experiment: "On Tuesday and Friday, spend 10 minutes cleaning the top 3 workstreams before doing anything else.",
+    });
+  }
+
+  if (decisionDebt) {
+    items.push({
+      id: "retro-decisions",
+      title: "Decision drift is taxing execution",
+      severity: decisionDebt >= 2 ? "high" : "medium",
+      evidence: `${decisionDebt} decision${decisionDebt === 1 ? " is" : "s are"} overdue, which means the team is absorbing uncertainty as execution tax.`,
+      systemFix: "Create one standing short decision review instead of letting important choices leak across threads.",
+      experiment: "Run one 20-minute decision sprint each week until overdue decisions hit zero.",
+    });
+  }
+
+  if (overloadedPeople.length) {
+    const top = overloadedPeople[0];
+    items.push({
+      id: "retro-load",
+      title: "Collaboration load is pooling around one person",
+      severity: top.score >= 80 ? "high" : "medium",
+      evidence: `${top.name} is carrying the heaviest pressure (${top.score}) across ${top.workstreams.slice(0, 3).join(", ") || "the board"}. That is how response latency turns into invisible drag.`,
+      systemFix: "Reduce dependency fan-in: convert one live dependency into a direct decision, delegation, or explicit de-prioritization.",
+      experiment: `During the next 2 weeks, remove at least one waiting dependency from ${top.name}'s queue every review cycle.`,
+    });
+  }
+
+  if (trendDelta <= -4 && snapshots.length >= 2) {
+    items.push({
+      id: "retro-trend",
+      title: "Collaboration quality is slipping over time",
+      severity: "high",
+      evidence: `Collaboration health is down ${Math.abs(trendDelta)} points versus the snapshot baseline. The current system is producing more drag than it removes.`,
+      systemFix: "Stop adding new process. Tighten the existing rhythm around priorities, blockers, and decisions until the health trend reverses.",
+      experiment: "For the next 2 weeks, treat new rituals as banned. Only improve the top-priority review, unblock rule, and decision sprint.",
+    });
+  }
+
+  if (!items.length) {
+    items.push({
+      id: "retro-steady",
+      title: "No major systemic drag signal",
+      severity: "low",
+      evidence: "The board is not showing strong recurring collaboration failure patterns right now.",
+      systemFix: "Keep the current rhythm, but keep snapshots honest so the system does not quietly decay.",
+      experiment: "Save two fresh snapshots next week and re-run the retro with real movement data.",
+    });
+  }
+
+  const rankedItems = items
+    .sort((a, b) => retroSeverityWeight(b.severity) - retroSeverityWeight(a.severity))
+    .slice(0, 4);
+
+  const working: string[] = [];
+  if (!blockedCount) working.push("No blocked workstreams are currently screaming for attention.");
+  if (!decisionDebt) working.push("Decision hygiene is holding. Nothing logged is overdue.");
+  if (trendDelta >= 0 && snapshots.length) working.push(`Collaboration health is up ${trendDelta} points versus the baseline snapshot.`);
+  if (collaboratorMap.overloadedCount === 0) working.push("Collaboration load looks reasonably spread out right now.");
+  if (!working.length) working.push("There is some structure here already. The app is finding problems, which is better than guessing.");
+
+  const strongestSignal = rankedItems[0]?.title || "No strong retro signal";
+  const score = clamp(100 - rankedItems.reduce((sum, item) => sum + (item.severity === "high" ? 18 : item.severity === "medium" ? 10 : 4), 0), 28, 100);
+  const headline = rankedItems[0]?.severity === "high"
+    ? `${rankedItems[0].title} is the main system problem to fix next.`
+    : `The collaboration system is mostly workable, but ${rankedItems[0]?.title.toLowerCase() || "there is still one pattern worth tightening"}.`;
+  const experimentPlan = [
+    `RETRO EXPERIMENT PLAN`,
+    "",
+    `Headline: ${headline}`,
+    `Strongest signal: ${strongestSignal}`,
+    "",
+    "What to keep:",
+    ...working.map((item) => `- ${item}`),
+    "",
+    "What to fix next:",
+    ...rankedItems.map((item, index) => `${index + 1}. ${item.title} — ${item.systemFix}`),
+    "",
+    "2-week experiments:",
+    ...rankedItems.map((item) => `- ${item.experiment}`),
+  ].join("\n");
+
+  return {
+    score,
+    headline,
+    strongestSignal,
+    items: rankedItems,
+    working,
+    experimentPlan,
+    copyBlock: experimentPlan,
+  };
+}
+
+function retroSeverityWeight(severity: CollaborationRetroItem["severity"]) {
+  return severity === "high" ? 3 : severity === "medium" ? 2 : 1;
 }
 
 function buildCollaboratorPrepPack({
