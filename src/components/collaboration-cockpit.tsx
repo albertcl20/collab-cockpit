@@ -65,6 +65,26 @@ type DecisionSprint = {
   memo: string;
 };
 
+type OverlapRadarItem = {
+  id: string;
+  leftName: string;
+  rightName: string;
+  score: number;
+  severity: "high" | "medium" | "low";
+  sharedSignals: string[];
+  collisionRisk: string;
+  consolidationMove: string;
+  keepTogether: string;
+  copyBlock: string;
+};
+
+type OverlapRadar = {
+  items: OverlapRadarItem[];
+  headline: string;
+  hiddenWorkCount: number;
+  copyBlock: string;
+};
+
 type Snapshot = {
   id: string;
   createdAt: string;
@@ -537,6 +557,7 @@ export function CollaborationCockpit() {
     [scoredWorkstreams, state.decisions, state.snapshots, collaboratorMap]
   );
   const decisionSprint = useMemo(() => buildDecisionSprint(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
+  const overlapRadar = useMemo(() => buildOverlapRadar(scoredWorkstreams), [scoredWorkstreams]);
   const budgetPlan = useMemo(() => buildBudgetPlan(scoredWorkstreams, budget), [scoredWorkstreams, budget]);
   const interventionSimulations = useMemo(
     () => buildInterventionSimulations({ workstreams: state.workstreams, decisions: state.decisions, budget }),
@@ -1472,6 +1493,67 @@ export function CollaborationCockpit() {
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="Overlap radar" subtitle="Catches duplicate threads, split ownership, and fake parallel progress before collaboration turns into two people doing the same thinking twice.">
+              <div className="grid gap-4">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <MetricCard label="Collisions found" value={String(overlapRadar.items.length)} note={overlapRadar.headline} />
+                  <MetricCard label="High risk" value={String(overlapRadar.items.filter((item) => item.severity === "high").length)} note={overlapRadar.items[0]?.collisionRisk ?? "No serious overlap detected"} />
+                  <MetricCard label="Work hidden in overlap" value={String(overlapRadar.hiddenWorkCount)} note={overlapRadar.items[0]?.keepTogether ?? "Nothing is obviously fragmented"} />
+                </div>
+
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-amber-900">Consolidation memo</p>
+                      <p className="mt-1 text-sm leading-6 text-amber-900/85">{overlapRadar.headline}</p>
+                    </div>
+                    <button type="button" onClick={() => copyText(overlapRadar.copyBlock, "overlap radar")} className="rounded-xl border border-white/80 bg-white/80 px-4 py-2 text-sm font-medium text-amber-900 transition hover:bg-white">
+                      Copy memo
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 xl:grid-cols-2">
+                  {overlapRadar.items.length ? overlapRadar.items.map((item) => (
+                    <div key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-base font-semibold text-slate-900">{item.leftName} ↔ {item.rightName}</h3>
+                          <p className="mt-1 text-sm text-slate-600">{item.collisionRisk}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge tone={nudgeTone[item.severity]}>{item.severity} risk</Badge>
+                          <Badge>{item.score} score</Badge>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 space-y-3 text-sm text-slate-600">
+                        <div>
+                          <span className="font-medium text-slate-900">Shared signals:</span> {item.sharedSignals.join(" · ")}
+                        </div>
+                        <div>
+                          <span className="font-medium text-slate-900">Keep together:</span> {item.keepTogether}
+                        </div>
+                        <div>
+                          <span className="font-medium text-slate-900">Consolidation move:</span> {item.consolidationMove}
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-3">
+                        <button type="button" onClick={() => copyText(item.copyBlock, `${item.leftName} overlap memo`)} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                          Copy exact fix
+                        </button>
+                      </div>
+                    </div>
+                  )) : (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-5 text-sm text-slate-500 xl:col-span-2">
+                      No real overlap is showing right now. Either the board is clean or the naming is still too vague to spot collisions.
+                    </div>
+                  )}
                 </div>
               </div>
             </Panel>
@@ -2526,6 +2608,133 @@ function buildDecisionSprint(workstreams: ScoredWorkstream[], decisions: Decisio
     highPressureCount: ranked.filter((item) => item.urgency === "high").length,
     copyBlock,
   };
+}
+
+function buildOverlapRadar(workstreams: ScoredWorkstream[]): OverlapRadar {
+  const pairs: OverlapRadarItem[] = [];
+
+  for (let index = 0; index < workstreams.length; index += 1) {
+    for (let cursor = index + 1; cursor < workstreams.length; cursor += 1) {
+      const left = workstreams[index];
+      const right = workstreams[cursor];
+      const leftTokens = meaningfulTokens(`${left.name} ${left.notes} ${left.nextStep} ${left.desiredOutcome} ${left.decisionNeeded}`);
+      const rightTokens = meaningfulTokens(`${right.name} ${right.notes} ${right.nextStep} ${right.desiredOutcome} ${right.decisionNeeded}`);
+      const sharedTokens = [...leftTokens].filter((token) => rightTokens.has(token));
+      const tokenOverlap = sharedTokens.length;
+      const ownerMatch = normalizePerson(left.owner) && normalizePerson(left.owner) === normalizePerson(right.owner);
+      const waitingMatch = sharedEntity(left.waitingOn, right.waitingOn);
+      const outcomeMatch = sharedEntity(left.desiredOutcome, right.desiredOutcome) || sharedEntity(left.decisionNeeded, right.decisionNeeded);
+      const bothHot = left.score >= 65 && right.score >= 65;
+      const bothStale = left.ageDays >= 3 && right.ageDays >= 3;
+      const oneBlocked = left.status === "blocked" || right.status === "blocked";
+      const oneWaiting = Boolean(left.waitingOn.trim()) || Boolean(right.waitingOn.trim());
+
+      const score = clamp(
+        tokenOverlap * 14
+          + (ownerMatch ? 16 : 0)
+          + (waitingMatch ? 18 : 0)
+          + (outcomeMatch ? 16 : 0)
+          + (bothHot ? 12 : 0)
+          + (bothStale ? 8 : 0)
+          + (oneBlocked && oneWaiting ? 10 : 0),
+        0,
+        100
+      );
+
+      if (score < 42) continue;
+
+      const severity: OverlapRadarItem["severity"] = score >= 72 ? "high" : score >= 56 ? "medium" : "low";
+      const sharedSignals = [
+        ownerMatch ? `same owner: ${left.owner}` : "different owners touching the same terrain",
+        waitingMatch ? `shared dependency: ${coalesceEntity(left.waitingOn, right.waitingOn)}` : null,
+        outcomeMatch ? `same outcome/question: ${coalesceEntity(left.desiredOutcome || left.decisionNeeded, right.desiredOutcome || right.decisionNeeded)}` : null,
+        tokenOverlap ? `shared language: ${sharedTokens.slice(0, 4).join(", ")}` : null,
+        bothHot ? "both workstreams are still competing for real attention" : null,
+        bothStale ? "both threads are aging at the same time" : null,
+      ].filter(Boolean) as string[];
+
+      const collisionRisk = ownerMatch
+        ? `${left.owner} is carrying two adjacent threads that should probably be one cleaner conversation.`
+        : `${left.owner} and ${right.owner} may be advancing the same work through separate mental models.`;
+      const keepTogether = outcomeMatch
+        ? `Keep the shared goal explicit: ${coalesceEntity(left.desiredOutcome || left.decisionNeeded, right.desiredOutcome || right.decisionNeeded)}.`
+        : `Treat these as one joined lane until the next step and blocker stop contradicting each other.`;
+      const consolidationMove = `Keep ${left.score >= right.score ? left.name : right.name} as the primary thread, pull the useful notes from ${left.score >= right.score ? right.name : left.name}, and rewrite one owner, one blocker, one next move.`;
+      const copyBlock = [
+        "OVERLAP FIX",
+        "",
+        `Threads: ${left.name} ↔ ${right.name}`,
+        `Risk: ${collisionRisk}`,
+        `Signals: ${sharedSignals.join(" | ")}`,
+        `Keep together: ${keepTogether}`,
+        `Exact move: ${consolidationMove}`,
+      ].join("\n");
+
+      pairs.push({
+        id: `${left.id}-${right.id}`,
+        leftName: left.name,
+        rightName: right.name,
+        score,
+        severity,
+        sharedSignals,
+        collisionRisk,
+        consolidationMove,
+        keepTogether,
+        copyBlock,
+      });
+    }
+  }
+
+  const items = pairs.sort((a, b) => b.score - a.score).slice(0, 4);
+  const headline = items.length
+    ? `${items[0].leftName} and ${items[0].rightName} look split across overlapping threads. Merge the thinking before more work disappears into duplicate updates.`
+    : "No obvious duplicate threads found. Nice. Also mildly suspicious.";
+  const hiddenWorkCount = items.reduce((sum, item) => sum + (item.severity === "high" ? 2 : 1), 0);
+  const copyBlock = items.length
+    ? [
+        "OVERLAP RADAR",
+        "",
+        headline,
+        "",
+        ...items.map((item, index) => `${index + 1}. ${item.leftName} ↔ ${item.rightName} — ${item.severity} risk — ${item.consolidationMove}`),
+      ].join("\n")
+    : headline;
+
+  return { items, headline, hiddenWorkCount, copyBlock };
+}
+
+function meaningfulTokens(text: string) {
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((token) => token.length >= 5)
+      .filter((token) => !COMMON_TOKENS.has(token))
+  );
+}
+
+const COMMON_TOKENS = new Set([
+  "about", "after", "again", "albert", "around", "because", "before", "being", "clear", "could", "david", "exact", "focus", "needs", "right", "should", "still", "their", "there", "these", "thing", "those", "through", "until", "while", "which", "workstream"
+]);
+
+function normalizePerson(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function normalizeEntity(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function sharedEntity(left: string, right: string) {
+  const a = normalizeEntity(left);
+  const b = normalizeEntity(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.length >= 8 && b.length >= 8 && (a.includes(b) || b.includes(a));
+}
+
+function coalesceEntity(left: string, right: string) {
+  return left.trim() || right.trim() || "shared dependency";
 }
 
 function matchDecisionWorkstream(decision: Decision, workstreams: ScoredWorkstream[]) {
