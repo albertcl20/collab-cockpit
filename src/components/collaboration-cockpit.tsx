@@ -186,6 +186,33 @@ type NudgeItem = {
   message: string;
 };
 
+type CommitmentLane = "due-now" | "this-week" | "waiting" | "stable";
+
+type CommitmentPulseItem = {
+  id: string;
+  source: "workstream" | "decision";
+  title: string;
+  owner: string;
+  lane: CommitmentLane;
+  dueDate: string;
+  dueLabel: string;
+  risk: number;
+  reason: string;
+  promise: string;
+  followUp: string;
+  escalation: string;
+};
+
+type CommitmentPulse = {
+  items: CommitmentPulseItem[];
+  dueNowCount: number;
+  thisWeekCount: number;
+  waitingCount: number;
+  ownerLoad: string;
+  headline: string;
+  copyBlock: string;
+};
+
 type CollaboratorBrief = {
   name: string;
   score: number;
@@ -402,6 +429,13 @@ const nudgeTone: Record<NudgeItem["urgency"], string> = {
   low: "border-blue-200 bg-blue-50 text-blue-800",
 };
 
+const commitmentTone: Record<CommitmentLane, string> = {
+  "due-now": "border-rose-200 bg-rose-50 text-rose-900",
+  "this-week": "border-amber-200 bg-amber-50 text-amber-900",
+  waiting: "border-blue-200 bg-blue-50 text-blue-900",
+  stable: "border-emerald-200 bg-emerald-50 text-emerald-900",
+};
+
 export function CollaborationCockpit() {
   const bootState = getBootState();
   const [state, setState] = useState<AppState>(bootState);
@@ -473,6 +507,7 @@ export function CollaborationCockpit() {
   const insights = useMemo(() => buildInsights(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const protocolPlanner = useMemo(() => buildProtocolPlanner(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const nudgeQueue = useMemo(() => buildNudgeQueue(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
+  const commitmentPulse = useMemo(() => buildCommitmentPulse(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const collaboratorMap = useMemo(() => buildCollaboratorMap(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const collaboratorPrepPack = useMemo(
     () => buildCollaboratorPrepPack({ briefs: collaboratorMap.briefs, workstreams: scoredWorkstreams, decisions: state.decisions, collaborator: selectedCollaborator }),
@@ -870,6 +905,52 @@ export function CollaborationCockpit() {
                     <textarea readOnly className={`${inputClass} mt-4 min-h-28 bg-white/80 font-mono text-sm`} value={item.message} />
                   </div>
                 )) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">No active nudges. Either collaboration is unusually clean or the board is under-reporting pain.</p>}
+              </div>
+            </Panel>
+
+            <Panel title="Commitment pulse" subtitle="Turns promises and decision debt into a visible short-horizon execution board, so nothing important quietly expires in chat. ">
+              <div className="mb-4 grid gap-3 md:grid-cols-4">
+                <MetricCard label="Due now" value={String(commitmentPulse.dueNowCount)} note={commitmentPulse.dueNowCount ? "Needs same-day attention" : "No same-day commitments"} />
+                <MetricCard label="This week" value={String(commitmentPulse.thisWeekCount)} note={commitmentPulse.thisWeekCount ? "Worth scheduling explicitly" : "No medium-horizon pressure"} />
+                <MetricCard label="Waiting" value={String(commitmentPulse.waitingCount)} note={commitmentPulse.waitingCount ? "Blocked by replies or decisions" : "Not trapped in dependency limbo"} />
+                <MetricCard label="Owner load" value={commitmentPulse.ownerLoad} note={commitmentPulse.headline} />
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">72-hour commitment readout</h3>
+                    <p className="mt-1 text-sm text-slate-600">{commitmentPulse.headline}</p>
+                  </div>
+                  <button type="button" onClick={() => copyText(commitmentPulse.copyBlock, "commitment pulse")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                    Copy commitment pulse
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3">
+                {commitmentPulse.items.length ? commitmentPulse.items.map((item) => (
+                  <div key={item.id} className={`rounded-2xl border p-4 ${commitmentTone[item.lane]}`}>
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-sm font-semibold">{item.title}</h3>
+                          <Badge tone="border-white/70 bg-white/70 text-slate-700">{item.source}</Badge>
+                          <Badge tone="border-white/70 bg-white/70 text-slate-700">risk {item.risk}</Badge>
+                          <Badge tone="border-white/70 bg-white/70 text-slate-700">{item.dueLabel}</Badge>
+                        </div>
+                        <p className="mt-2 text-sm leading-6 opacity-90">{item.reason}</p>
+                        <div className="mt-3 grid gap-1 text-sm opacity-90">
+                          <p><span className="font-medium">Owner:</span> {item.owner}</p>
+                          <p><span className="font-medium">Promise:</span> {item.promise}</p>
+                          <p><span className="font-medium">Escalation if no movement:</span> {item.escalation}</p>
+                        </div>
+                      </div>
+                      <button type="button" onClick={() => copyText(item.followUp, `${item.title} follow-up`)} className="rounded-xl border border-white/70 bg-white/80 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-white">
+                        Copy follow-up
+                      </button>
+                    </div>
+                    <textarea readOnly className={`${inputClass} mt-4 min-h-28 bg-white/80 font-mono text-sm`} value={item.followUp} />
+                  </div>
+                )) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">No commitments under stress right now. Either the board is clean or it is hiding the truth unusually well.</p>}
               </div>
             </Panel>
 
@@ -3098,6 +3179,120 @@ function buildNudgeQueue(workstreams: ScoredWorkstream[], decisions: Decision[])
   };
 }
 
+function buildCommitmentPulse(workstreams: ScoredWorkstream[], decisions: Decision[]): CommitmentPulse {
+  const workstreamItems = workstreams
+    .filter((item) => item.status !== "done")
+    .map((item) => {
+      const waiting = item.waitingOn.trim();
+      const blocked = item.status === "blocked";
+      const dueOffset = blocked ? 0 : item.urgency >= 9 ? 1 : item.urgency >= 7 ? 2 : item.ageDays >= 4 ? 3 : 5;
+      const dueDate = futureIso(dueOffset);
+      const lane: CommitmentLane = blocked || item.ageDays >= 5 || item.urgency >= 9
+        ? "due-now"
+        : waiting
+          ? "waiting"
+          : item.urgency >= 7 || item.ageDays >= 3 || item.confidence <= 6
+            ? "this-week"
+            : "stable";
+      const risk = clamp(
+        Math.round(item.score / 2 + item.drag / 5 + (blocked ? 16 : 0) + (waiting ? 8 : 0) + (item.ageDays >= 4 ? 8 : 0) + (item.confidence <= 6 ? 6 : 0)),
+        45,
+        99,
+      );
+      const owner = item.owner || inferNudgeTarget(item);
+      const reason = blocked
+        ? `${item.name} is blocked, and the board already knows why: ${normalizeSentence(item.blocker || "the current path is not moving")}`
+        : waiting
+          ? `${item.name} is effectively waiting on ${waiting}. Until that reply lands, silence is part of the risk.`
+          : `${item.name} is still live work with urgency ${item.urgency}/10, confidence ${item.confidence}/10, and ${item.ageDays} day${item.ageDays === 1 ? "" : "s"} since it was last touched.`;
+      const promise = blocked
+        ? `Unblock ${item.name} and confirm the next concrete move by ${prettyDate(dueDate)}.`
+        : waiting
+          ? `Get a reply or explicit no by ${prettyDate(dueDate)}, then either move forward or re-scope.`
+          : `Advance ${item.name} with one visible step by ${prettyDate(dueDate)}: ${normalizeSentence(item.nextStep)}`;
+      const followUp = [
+        `Quick check on ${item.name}.`,
+        `Current risk: ${reason}`,
+        `Commitment for the next ${lane === "due-now" ? "24 hours" : lane === "this-week" ? "72 hours" : "few days"}: ${promise}`,
+        `If this is no longer the right commitment, say so directly and I’ll re-cut the board instead of pretending it is still fine.`,
+      ].join("\n");
+      const escalation = blocked || waiting
+        ? `Escalate the dependency, cut scope, or drop it from the active stack.`
+        : `Lower priority explicitly or convert it into a real decision review.`;
+      return {
+        id: `${item.id}-commitment`,
+        source: "workstream" as const,
+        title: item.name,
+        owner,
+        lane,
+        dueDate,
+        dueLabel: dueLabel(dueDate, lane),
+        risk,
+        reason,
+        promise,
+        followUp,
+        escalation,
+      };
+    });
+
+  const decisionItems = decisions.map((decision) => {
+    const overdue = isPast(decision.deadline);
+    const dueSoon = daysUntil(decision.deadline) <= 2;
+    const lane: CommitmentLane = overdue ? "due-now" : dueSoon ? "this-week" : "stable";
+    const risk = clamp(58 + (overdue ? 22 : 0) + (dueSoon ? 10 : 0) + (10 - decision.confidence) * 2, 48, 99);
+    const owner = decision.options.match(/owner:\s*([^\n]+)/i)?.[1]?.trim() || "Decision owner";
+    const reason = overdue
+      ? `${decision.topic} is already overdue, which means uncertainty is now part of execution.`
+      : `${decision.topic} needs a call by ${prettyDate(decision.deadline)} to avoid more drift in ${decision.impactArea}.`;
+    const promise = `Close the decision or make the missing evidence explicit by ${prettyDate(decision.deadline)}.`;
+    const followUp = [
+      `Decision check: ${decision.topic}.`,
+      `Why this needs attention: ${reason}`,
+      `Commitment: ${promise}`,
+      `Recommendation on the table: ${normalizeSentence(decision.recommendation)}`,
+    ].join("\n");
+    return {
+      id: `${decision.id}-decision-commitment`,
+      source: "decision" as const,
+      title: decision.topic,
+      owner,
+      lane,
+      dueDate: decision.deadline,
+      dueLabel: dueLabel(decision.deadline, lane),
+      risk,
+      reason,
+      promise,
+      followUp,
+      escalation: "Either decide, assign evidence gathering, or explicitly push the deadline.",
+    };
+  });
+
+  const items = [...workstreamItems, ...decisionItems]
+    .filter((item) => item.lane !== "stable" || item.risk >= 70)
+    .sort((a, b) => b.risk - a.risk || new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
+    .slice(0, 8);
+
+  const dueNowCount = items.filter((item) => item.lane === "due-now").length;
+  const thisWeekCount = items.filter((item) => item.lane === "this-week").length;
+  const waitingCount = items.filter((item) => item.lane === "waiting").length;
+  const ownerCounts = items.reduce<Record<string, number>>((acc, item) => {
+    acc[item.owner] = (acc[item.owner] ?? 0) + 1;
+    return acc;
+  }, {});
+  const topOwner = Object.entries(ownerCounts).sort((a, b) => b[1] - a[1])[0];
+  const ownerLoad = topOwner ? `${topOwner[0]} ×${topOwner[1]}` : "Balanced";
+  const headline = items.length
+    ? `${dueNowCount} due now, ${thisWeekCount} due this week, ${waitingCount} trapped in dependency mode. Heaviest load sits with ${ownerLoad}.`
+    : "No stressed commitments detected. Either things are tidy or the board is being weirdly optimistic.";
+  const copyBlock = [
+    "COMMITMENT PULSE",
+    "",
+    ...items.map((item, index) => `${index + 1}. ${item.title} — ${item.dueLabel} · risk ${item.risk}\nOwner: ${item.owner}\nReason: ${item.reason}\nPromise: ${item.promise}\nEscalation: ${item.escalation}\n\n${item.followUp}`),
+  ].join("\n\n");
+
+  return { items, dueNowCount, thisWeekCount, waitingCount, ownerLoad, headline, copyBlock };
+}
+
 function inferNudgeTarget(item: ScoredWorkstream) {
   const waiting = item.waitingOn.toLowerCase();
   if (waiting.includes("david")) return "David";
@@ -3139,6 +3334,16 @@ function prettyDate(date: string) {
 
 function prettyDateTime(date: string) {
   return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(date));
+}
+
+function dueLabel(date: string, lane: CommitmentLane) {
+  const days = daysUntil(date);
+  if (lane === "due-now") return days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? "today" : "next 24h";
+  if (lane === "waiting") return `waiting until ${prettyDate(date)}`;
+  if (days <= 0) return "today";
+  if (days === 1) return "tomorrow";
+  if (days <= 7) return `in ${days} days`;
+  return prettyDate(date);
 }
 
 function todayIso() {
