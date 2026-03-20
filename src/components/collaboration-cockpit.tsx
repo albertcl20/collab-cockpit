@@ -46,6 +46,25 @@ type Decision = {
   impactArea: string;
 };
 
+type DecisionSprint = {
+  id: string;
+  topic: string;
+  workstreamName: string;
+  urgency: "high" | "medium" | "low";
+  score: number;
+  confidenceGap: number;
+  daysLeft: number;
+  owner: string;
+  whyNow: string;
+  evidenceNeeded: string;
+  exactQuestion: string;
+  preRead: string;
+  recommendation: string;
+  killCriteria: string;
+  sprintPlan: string;
+  memo: string;
+};
+
 type Snapshot = {
   id: string;
   createdAt: string;
@@ -383,6 +402,7 @@ export function CollaborationCockpit() {
   const insights = useMemo(() => buildInsights(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const protocolPlanner = useMemo(() => buildProtocolPlanner(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const nudgeQueue = useMemo(() => buildNudgeQueue(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
+  const decisionSprint = useMemo(() => buildDecisionSprint(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const budgetPlan = useMemo(() => buildBudgetPlan(scoredWorkstreams, budget), [scoredWorkstreams, budget]);
   const interventionSimulations = useMemo(
     () => buildInterventionSimulations({ workstreams: state.workstreams, decisions: state.decisions, budget }),
@@ -1019,6 +1039,62 @@ export function CollaborationCockpit() {
               </div>
             </Panel>
 
+            <Panel title="Decision sprint" subtitle="Turns decision drift into one crisp call, memo, and next move instead of ambient ambiguity.">
+              <div className="grid gap-4">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <MetricCard label="Sprint items" value={String(decisionSprint.items.length)} note={decisionSprint.items.length ? `${decisionSprint.headline}` : "No obvious decision debt right now"} />
+                  <MetricCard label="High pressure" value={String(decisionSprint.highPressureCount)} note={decisionSprint.highPressureCount ? "Needs a real decision pass" : "Nothing urgent is screaming"} />
+                  <MetricCard label="Lowest confidence" value={decisionSprint.items[0] ? `${decisionSprint.items[0].confidenceGap} gap` : "—"} note={decisionSprint.items[0]?.topic ?? "No decision memo yet"} />
+                </div>
+
+                <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-blue-900">Sprint memo</p>
+                      <p className="mt-1 text-sm leading-6 text-blue-900/85">{decisionSprint.headline}</p>
+                    </div>
+                    <button type="button" onClick={() => copyText(decisionSprint.copyBlock, "decision sprint")} className="rounded-xl border border-white/80 bg-white/80 px-4 py-2 text-sm font-medium text-blue-900 transition hover:bg-white">
+                      Copy sprint memo
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 xl:grid-cols-2">
+                  {decisionSprint.items.map((item) => (
+                    <div key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-base font-semibold text-slate-900">{item.topic}</h3>
+                          <p className="mt-1 text-sm text-slate-600">{item.workstreamName}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge tone={nudgeTone[item.urgency]}>{item.urgency} pressure</Badge>
+                          <Badge>{item.score} score</Badge>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 text-sm text-slate-600">
+                        <div><span className="font-medium text-slate-900">Why now:</span> {item.whyNow}</div>
+                        <div><span className="font-medium text-slate-900">Exact question:</span> {item.exactQuestion}</div>
+                        <div><span className="font-medium text-slate-900">Evidence needed:</span> {item.evidenceNeeded}</div>
+                        <div><span className="font-medium text-slate-900">Kill criteria:</span> {item.killCriteria}</div>
+                        <div><span className="font-medium text-slate-900">Pre-read:</span> {item.preRead}</div>
+                        <div><span className="font-medium text-slate-900">Recommendation:</span> {item.recommendation}</div>
+                        <div><span className="font-medium text-slate-900">25-minute sprint:</span> {item.sprintPlan}</div>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-3">
+                        <button type="button" onClick={() => copyText(item.memo, `${item.topic} memo`)} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                          Copy memo
+                        </button>
+                        <div className="self-center text-xs text-slate-500">Owner: {item.owner} · {item.daysLeft >= 0 ? `${item.daysLeft} days left` : `${Math.abs(item.daysLeft)} days overdue`} · confidence gap {item.confidenceGap}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Panel>
+
             <Panel title="Decision log" subtitle="Because vague thinking gets expensive fast.">
               <div className="space-y-3">
                 {state.decisions.map((decision) => {
@@ -1508,6 +1584,123 @@ function buildInsights(workstreams: ScoredWorkstream[], decisions: Decision[]): 
           tone: "blue",
         },
   ];
+}
+
+function buildDecisionSprint(workstreams: ScoredWorkstream[], decisions: Decision[]) {
+  const ranked = decisions
+    .map((decision) => {
+      const match = matchDecisionWorkstream(decision, workstreams);
+      const daysLeft = daysUntil(decision.deadline);
+      const overdue = daysLeft < 0;
+      const confidenceGap = clamp(10 - decision.confidence, 0, 10);
+      const workstreamDrag = match?.drag ?? 28;
+      const workstreamScore = match?.score ?? 60;
+      const timePressure = overdue ? 35 : daysLeft <= 1 ? 28 : daysLeft <= 3 ? 18 : daysLeft <= 7 ? 10 : 4;
+      const score = clamp(Math.round(workstreamScore * 0.35 + workstreamDrag * 0.25 + confidenceGap * 4 + timePressure), 25, 100);
+      const urgency: DecisionSprint["urgency"] = score >= 78 || overdue ? "high" : score >= 58 ? "medium" : "low";
+      const workstreamName = match?.name || decision.impactArea || "Unassigned decision context";
+      const owner = match?.owner || inferOwner(decision);
+      const evidenceNeeded = match?.blocker
+        ? `Resolve the blocker signal first: ${match.blocker}`
+        : match?.waitingOn
+          ? `Confirm the dependency from ${match.waitingOn}.`
+          : `Bring one fact that would actually change the recommendation for ${workstreamName}.`;
+      const exactQuestion = match?.decisionNeeded || decision.topic;
+      const whyNow = overdue
+        ? `${decision.topic} is overdue since ${prettyDate(decision.deadline)} and is now taxing execution on ${workstreamName}.`
+        : `${decision.topic} lands in ${daysLeft} days and the current confidence is only ${decision.confidence}/10.`;
+      const preRead = match
+        ? `Read the latest state of ${match.name}, current blocker, and next step before making the call.`
+        : `Read the existing options and recommendation before discussing new ideas.`;
+      const killCriteria = match?.desiredOutcome
+        ? `If the call does not improve the path toward ${match.desiredOutcome.toLowerCase()}, park it.`
+        : `If the decision adds more ambiguity than clarity, do not escalate it yet.`;
+      const sprintPlan = `5 min frame the decision · 10 min gather missing evidence · 5 min pick owner and recommendation · 5 min rewrite the exact next move.`;
+      const memo = [
+        `DECISION SPRINT`,
+        "",
+        `Topic: ${decision.topic}`,
+        `Workstream: ${workstreamName}`,
+        `Owner: ${owner}`,
+        `Why now: ${whyNow}`,
+        `Exact question: ${exactQuestion}`,
+        `Evidence needed: ${evidenceNeeded}`,
+        `Recommendation: ${decision.recommendation}`,
+        `Kill criteria: ${killCriteria}`,
+        `Sprint plan: ${sprintPlan}`,
+      ].join('\n');
+
+      return {
+        id: decision.id,
+        topic: decision.topic,
+        workstreamName,
+        urgency,
+        score,
+        confidenceGap,
+        daysLeft,
+        owner,
+        whyNow,
+        evidenceNeeded,
+        exactQuestion,
+        preRead,
+        recommendation: decision.recommendation,
+        killCriteria,
+        sprintPlan,
+        memo,
+      } satisfies DecisionSprint;
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 4);
+
+  const headline = ranked.length
+    ? `${ranked[0].topic} is the sharpest decision to clean up next. The goal is one real call, not another vague conversation.`
+    : "No meaningful decision debt detected. Suspicious, but nice if true.";
+
+  const copyBlock = ranked.length
+    ? [
+        `DECISION SPRINT OVERVIEW`,
+        "",
+        headline,
+        "",
+        ...ranked.map((item, index) => `${index + 1}. ${item.topic} — ${item.urgency} pressure — ${item.exactQuestion} — next: ${item.evidenceNeeded}`),
+      ].join('\n')
+    : headline;
+
+  return {
+    items: ranked,
+    headline,
+    highPressureCount: ranked.filter((item) => item.urgency === "high").length,
+    copyBlock,
+  };
+}
+
+function matchDecisionWorkstream(decision: Decision, workstreams: ScoredWorkstream[]) {
+  const topic = `${decision.topic} ${decision.impactArea} ${decision.options} ${decision.recommendation}`.toLowerCase();
+
+  return workstreams
+    .map((workstream) => {
+      const haystack = `${workstream.name} ${workstream.notes} ${workstream.nextStep} ${workstream.desiredOutcome} ${workstream.decisionNeeded}`.toLowerCase();
+      let overlap = 0;
+      for (const word of topic.split(/[^a-z0-9]+/).filter((word) => word.length >= 4)) {
+        if (haystack.includes(word)) overlap += 1;
+      }
+      if (decision.impactArea && haystack.includes(decision.impactArea.toLowerCase())) overlap += 2;
+      return { workstream, overlap };
+    })
+    .sort((a, b) => b.overlap - a.overlap || b.workstream.score - a.workstream.score)[0]?.workstream;
+}
+
+function inferOwner(decision: Decision) {
+  const text = `${decision.topic} ${decision.recommendation}`.toLowerCase();
+  if (text.includes('david')) return 'David';
+  if (text.includes('albert')) return 'Albert';
+  return 'Shared';
+}
+
+function daysUntil(isoDate: string) {
+  const target = new Date(`${isoDate}T00:00:00`);
+  const now = new Date();
+  return Math.ceil((target.getTime() - now.getTime()) / 86_400_000);
 }
 
 function buildAgenda(workstreams: ScoredWorkstream[], decisions: Decision[]) {

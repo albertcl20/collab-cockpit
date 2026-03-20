@@ -50,6 +50,10 @@ async function main() {
       if (response.status !== 200) {
         throw new Error(`${route} returned ${response.status}`);
       }
+      const body = await response.text();
+      if (!body.includes('Decision sprint')) {
+        throw new Error('Home page is up but missing Decision sprint content');
+      }
     } else if (response.status !== 200) {
       throw new Error(`${route} returned ${response.status}`);
     }
