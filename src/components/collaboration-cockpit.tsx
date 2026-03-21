@@ -123,6 +123,26 @@ type BudgetPlan = {
   contract: string;
 };
 
+type RitualCadenceItem = {
+  id: string;
+  dayLabel: string;
+  title: string;
+  mode: "async" | "sync" | "focus";
+  durationMinutes: number;
+  trigger: string;
+  purpose: string;
+  output: string;
+};
+
+type RitualCadencePlan = {
+  items: RitualCadenceItem[];
+  syncMinutes: number;
+  asyncCount: number;
+  focusCount: number;
+  headline: string;
+  operatingSystem: string;
+};
+
 type InterventionSimulation = {
   id: string;
   title: string;
@@ -559,6 +579,10 @@ export function CollaborationCockpit() {
   const decisionSprint = useMemo(() => buildDecisionSprint(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const overlapRadar = useMemo(() => buildOverlapRadar(scoredWorkstreams), [scoredWorkstreams]);
   const budgetPlan = useMemo(() => buildBudgetPlan(scoredWorkstreams, budget), [scoredWorkstreams, budget]);
+  const ritualCadence = useMemo(
+    () => buildRitualCadence({ workstreams: scoredWorkstreams, decisions: state.decisions, budget, blockedCount, staleCount }),
+    [scoredWorkstreams, state.decisions, budget, blockedCount, staleCount]
+  );
   const interventionSimulations = useMemo(
     () => buildInterventionSimulations({ workstreams: state.workstreams, decisions: state.decisions, budget }),
     [state.workstreams, state.decisions, budget]
@@ -1154,6 +1178,49 @@ export function CollaborationCockpit() {
                   <button type="button" onClick={() => copyText(budgetPlan.contract, "budget contract")} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
                     Copy budget contract
                   </button>
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="Operating cadence" subtitle="Builds a sane weekly collaboration rhythm from the board instead of defaulting to random pings and accidental meetings.">
+              <div className="grid gap-4">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <MetricCard label="Rituals" value={String(ritualCadence.items.length)} note={ritualCadence.headline} />
+                  <MetricCard label="Sync load" value={`${ritualCadence.syncMinutes}m`} note={`${budget.syncMinutes}m weekly sync budget`} />
+                  <MetricCard label="Async blocks" value={String(ritualCadence.asyncCount)} note={ritualCadence.asyncCount ? "Default to async unless the board earns a meeting" : "Everything is trying to become a meeting"} />
+                  <MetricCard label="Focus rituals" value={String(ritualCadence.focusCount)} note={ritualCadence.focusCount ? "Protected thinking still gets a seat at the table" : "No real focus ritual scheduled"} />
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">Recommended operating system</h3>
+                      <p className="mt-1 text-sm text-slate-600">{ritualCadence.headline}</p>
+                    </div>
+                    <button type="button" onClick={() => copyText(ritualCadence.operatingSystem, "operating cadence")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                      Copy cadence
+                    </button>
+                  </div>
+                  <textarea readOnly className={`${inputClass} mt-4 min-h-60 bg-white font-mono text-sm`} value={ritualCadence.operatingSystem} />
+                </div>
+                <div className="grid gap-3 xl:grid-cols-2">
+                  {ritualCadence.items.map((item) => (
+                    <div key={item.id} className={`rounded-2xl border p-4 ${item.mode === "sync" ? "border-violet-200 bg-violet-50 text-violet-900" : item.mode === "focus" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-blue-200 bg-blue-50 text-blue-900"}`}>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-base font-semibold">{item.dayLabel} · {item.title}</h3>
+                          <p className="mt-1 text-sm opacity-90">{item.purpose}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge tone="border-white/80 bg-white/80 text-slate-700">{item.mode}</Badge>
+                          <Badge tone="border-white/80 bg-white/80 text-slate-700">{item.durationMinutes} min</Badge>
+                        </div>
+                      </div>
+                      <div className="mt-4 space-y-2 text-sm opacity-95">
+                        <p><span className="font-medium">Trigger:</span> {item.trigger}</p>
+                        <p><span className="font-medium">Output:</span> {item.output}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </Panel>
@@ -3247,6 +3314,100 @@ function recommendProtocol(item: ScoredWorkstream): ProtocolRecommendation {
   };
 }
 
+
+function buildRitualCadence({
+  workstreams,
+  decisions,
+  budget,
+  blockedCount,
+  staleCount,
+}: {
+  workstreams: ScoredWorkstream[];
+  decisions: Decision[];
+  budget: Budget;
+  blockedCount: number;
+  staleCount: number;
+}): RitualCadencePlan {
+  const top = workstreams[0];
+  const blocked = workstreams.find((item) => item.status === "blocked" || item.blocker.trim());
+  const decision = decisions
+    .slice()
+    .sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())[0];
+
+  const items: RitualCadenceItem[] = [
+    {
+      id: "monday-reset",
+      dayLabel: "Monday",
+      title: "Priority reset",
+      mode: "async",
+      durationMinutes: 12,
+      trigger: top ? `Before the first serious block, rewrite the top stack around ${top.name}.` : "Before work starts, rewrite the top 3 priorities.",
+      purpose: "Kill fake urgency early and make the week legible before chat starts freelancing.",
+      output: top ? `One crisp async note with focus order, why ${top.name} is first, and one thing that gets ignored.` : "One crisp async note with the week's focus order.",
+    },
+    {
+      id: "tuesday-focus",
+      dayLabel: blockedCount ? "Tuesday" : "Midweek",
+      title: blocked ? "Unblock window" : "Focus protection",
+      mode: blocked ? "sync" : "focus",
+      durationMinutes: blocked ? Math.min(20, budget.syncMinutes || 20) : 45,
+      trigger: blocked ? `${blocked.name} is blocked or carrying real dependency drag.` : top ? `${top.name} needs protected time more than another meeting.` : "The board needs a protected work block.",
+      purpose: blocked ? "Resolve one dependency before it silently burns the week." : "Give the highest-value work enough uninterrupted attention to actually move.",
+      output: blocked ? `One owner, one decision, one rewritten next step for ${blocked.name}.` : top ? `A decision-ready artifact or cleaner recommendation for ${top.name}.` : "One meaningful artifact, not just motion.",
+    },
+    {
+      id: "wednesday-decision",
+      dayLabel: "Wednesday",
+      title: decision ? "Decision sprint" : "Board cleanup",
+      mode: decision ? "sync" : "async",
+      durationMinutes: decision ? 20 : 10,
+      trigger: decision ? `${decision.topic} is the nearest meaningful call on the board.` : staleCount ? `${staleCount} workstreams are getting stale.` : "Use the middle of the week to keep drift from accumulating.",
+      purpose: decision ? "Turn ambiguity into a real call while there is still time to use it." : "Clean stale work and rewrite any fuzzy next steps before they grow teeth.",
+      output: decision ? `A logged decision on ${decision.topic}, with owner and follow-through date.` : "A cleaned top stack with sharper next steps and less drag.",
+    },
+    {
+      id: "thursday-nudges",
+      dayLabel: "Thursday",
+      title: "Dependency sweep",
+      mode: "async",
+      durationMinutes: 10,
+      trigger: blockedCount || staleCount ? "Run this before dependencies become Friday surprises." : "Run this lightly to stop the board from aging in silence.",
+      purpose: "Flush open asks, overdue replies, and weak waiting states while there is still room to react.",
+      output: "2-3 concrete follow-ups sent or consciously killed.",
+    },
+    {
+      id: "friday-retro",
+      dayLabel: "Friday",
+      title: "Micro retro + snapshot",
+      mode: "async",
+      durationMinutes: 15,
+      trigger: "End the week by checking whether the collaboration system got less annoying or just busier.",
+      purpose: "Capture what is improving, what is rotting, and what ritual deserves to survive next week.",
+      output: "One saved snapshot, one process fix, and one thing to stop doing next week.",
+    },
+  ];
+
+  const syncMinutes = items.filter((item) => item.mode === "sync").reduce((sum, item) => sum + item.durationMinutes, 0);
+  const asyncCount = items.filter((item) => item.mode === "async").length;
+  const focusCount = items.filter((item) => item.mode === "focus").length;
+  const headline = blockedCount
+    ? `${blockedCount} blocked path${blockedCount === 1 ? " is" : "s are"} forcing a tighter cadence this week. Keep live time short and aim it only at unblock decisions.`
+    : staleCount
+      ? `${staleCount} stale thread${staleCount === 1 ? " is" : "s are"} pushing for a cleanup-heavy week. Keep the rhythm light but disciplined.`
+      : `The board looks stable enough for an async-first operating rhythm with one protected focus ritual.`;
+  const operatingSystem = [
+    "WEEKLY COLLABORATION CADENCE",
+    "",
+    `Headline: ${headline}`,
+    `Sync budget used: ${syncMinutes} / ${budget.syncMinutes} minutes`,
+    `Async rituals: ${asyncCount}`,
+    `Focus rituals: ${focusCount}`,
+    "",
+    ...items.map((item, index) => `${index + 1}. ${item.dayLabel} — ${item.title} (${item.mode}, ${item.durationMinutes} min)\n   Trigger: ${item.trigger}\n   Purpose: ${item.purpose}\n   Output: ${item.output}`),
+  ].join("\n\n");
+
+  return { items, syncMinutes, asyncCount, focusCount, headline, operatingSystem };
+}
 
 function buildInterventionSimulations({
   workstreams,
