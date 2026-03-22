@@ -251,6 +251,16 @@ type CoachPlan = {
   albertPlan: string;
 };
 
+type OperatingMemo = {
+  headline: string;
+  davidNow: string;
+  albertNow: string;
+  stakeholderPing: string;
+  riskLine: string;
+  next24Hours: string[];
+  copyBlock: string;
+};
+
 type ProtocolRecommendation = {
   id: string;
   workstreamName: string;
@@ -712,6 +722,10 @@ export function CollaborationCockpit() {
         sevenDayPlan,
       }),
     [briefMode, focusNow, scoredWorkstreams, state.decisions, state.updates, agenda, sevenDayPlan]
+  );
+  const operatingMemo = useMemo(
+    () => buildOperatingMemo({ workstreams: scoredWorkstreams, decisions: state.decisions, updates: state.updates, nudges: nudgeQueue.items, agenda }),
+    [scoredWorkstreams, state.decisions, state.updates, nudgeQueue.items, agenda]
   );
   const handoffDoctor = useMemo(
     () => analyzeHandoffDraft({ draft: handoffDraft, focusNow, selected }),
@@ -1295,6 +1309,53 @@ export function CollaborationCockpit() {
                     <textarea readOnly className={`${inputClass} mt-4 min-h-28 bg-white/80 font-mono text-sm`} value={item.message} />
                   </div>
                 )) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">No active nudges. Either collaboration is unusually clean or the board is under-reporting pain.</p>}
+              </div>
+            </Panel>
+
+            <Panel title="Operating memo" subtitle="Splits the board into the exact brief for David, the exact work for Albert, and the one stakeholder ping worth sending next.">
+              <div className="grid gap-4">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <MetricCard label="Next 24h moves" value={String(operatingMemo.next24Hours.length)} note={operatingMemo.headline} />
+                  <MetricCard label="David now" value={operatingMemo.davidNow.length > 120 ? "sharp" : "thin"} note="What David should decide, confirm, or keep in view." />
+                  <MetricCard label="Albert now" value={operatingMemo.albertNow.length > 120 ? "ready" : "thin"} note="What Albert can execute without another clarification round." />
+                  <MetricCard label="Stakeholder ping" value={operatingMemo.stakeholderPing.includes(":") ? "queued" : "none"} note={operatingMemo.riskLine} />
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">Shared operating memo</h3>
+                      <p className="mt-1 text-sm leading-6 text-slate-600">{operatingMemo.headline}</p>
+                    </div>
+                    <button type="button" onClick={() => copyText(operatingMemo.copyBlock, "operating memo")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                      Copy memo
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 xl:grid-cols-3">
+                  {[
+                    { title: "For David", body: operatingMemo.davidNow },
+                    { title: "For Albert", body: operatingMemo.albertNow },
+                    { title: "External ping", body: operatingMemo.stakeholderPing },
+                  ].map((item) => (
+                    <div key={item.title} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <h3 className="text-base font-semibold text-slate-900">{item.title}</h3>
+                      <p className="mt-3 text-sm leading-6 text-slate-600 whitespace-pre-line">{item.body}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <h3 className="text-base font-semibold text-slate-900">Next 24 hours</h3>
+                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                    {operatingMemo.next24Hours.map((item) => (
+                      <div key={item} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
+                        {item}
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </Panel>
 
@@ -3669,6 +3730,87 @@ function buildSevenDayPlan(workstreams: ScoredWorkstream[], decisions: Decision[
       why: overdue ? `It has been overdue since ${prettyDate(overdue.deadline)}.` : "Decision drift quietly taxes execution.",
     },
   ];
+}
+
+function buildOperatingMemo({
+  workstreams,
+  decisions,
+  updates,
+  nudges,
+  agenda,
+}: {
+  workstreams: ScoredWorkstream[];
+  decisions: Decision[];
+  updates: Update[];
+  nudges: NudgeItem[];
+  agenda: ReturnType<typeof buildAgenda>;
+}): OperatingMemo {
+  const top = workstreams[0];
+  const blocked = workstreams.find((item) => item.status === "blocked");
+  const overdueDecision = decisions.find((item) => isPast(item.deadline));
+  const latestUpdate = updates[0];
+  const firstNudge = nudges[0];
+
+  const headline = top
+    ? `${top.name} is the main collaboration bet. ${blocked ? `${blocked.name} is the drag that will keep stealing time until someone clears it.` : "No hard blocker is dominating the board right now."}`
+    : "The board needs at least one real workstream before the memo becomes useful.";
+
+  const davidNow = top
+    ? [
+        `Keep ${top.name} as the lead workstream unless a stronger signal shows up. ${whyNow(top)}`,
+        blocked ? `Clear this drag next: ${blocked.name}. ${blocked.blocker || blocked.waitingOn || "The blocker still needs a named owner and fallback."}` : `No hard blocker is screaming. Use the time to sharpen the next step on ${top.name}.`,
+        overdueDecision ? `Decision debt is real: ${overdueDecision.topic} is ${Math.abs(daysUntil(overdueDecision.deadline))} day${Math.abs(daysUntil(overdueDecision.deadline)) === 1 ? "" : "s"} overdue.` : `Decision debt is under control enough to stay in background mode for now.`,
+      ].join("\n\n")
+    : "No ranked workstream yet. Add one piece of real work and the memo stops being decorative.";
+
+  const albertNow = top
+    ? [
+        `Turn ${top.name} into visible progress: ${top.nextStep || "write the next concrete move."}`,
+        `Use this angle when updating David: ${agenda.openWith[0]}`,
+        latestUpdate ? `Anchor the async narrative with the latest signal: ${latestUpdate.title} — ${latestUpdate.detail}` : `No recent update is logged. Write a tighter async update once the next move is done.`,
+      ].join("\n\n")
+    : "Nothing to execute yet. The board needs shape before Albert can help without hallucinating structure.";
+
+  const stakeholderPing = firstNudge
+    ? `${firstNudge.target}: ${firstNudge.message}`
+    : blocked
+      ? `${blocked.owner || "Owner"}: Can you unblock ${blocked.name}? ${blocked.blocker || blocked.waitingOn || blocked.nextStep}`
+      : "No external ping is urgent right now. Keep the loop between David and Albert tight first.";
+
+  const riskLine = blocked
+    ? `${blocked.name} is the likeliest place where collaboration slips from planning into waiting.`
+    : overdueDecision
+      ? `${overdueDecision.topic} can quietly create rework if the decision keeps drifting.`
+      : top
+        ? `${top.name} is healthy enough, but vague follow-through would still waste the priority.`
+        : "No useful risk read until the board has at least one real workstream.";
+
+  const next24Hours = uniqueList([
+    agenda.openWith[0],
+    agenda.resolveToday[0],
+    firstNudge ? `Send: ${firstNudge.message}` : stakeholderPing,
+  ]).slice(0, 3);
+
+  const copyBlock = [
+    `Operating memo`,
+    `Headline: ${headline}`,
+    `For David: ${davidNow.replace(/\n\n/g, " ")}`,
+    `For Albert: ${albertNow.replace(/\n\n/g, " ")}`,
+    `External ping: ${stakeholderPing}`,
+    `Risk: ${riskLine}`,
+    `Next 24 hours:`,
+    ...next24Hours.map((item, index) => `${index + 1}. ${item}`),
+  ].join("\n");
+
+  return {
+    headline,
+    davidNow,
+    albertNow,
+    stakeholderPing,
+    riskLine,
+    next24Hours,
+    copyBlock,
+  };
 }
 
 function buildCoachPlan({
