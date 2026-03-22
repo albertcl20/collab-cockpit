@@ -1,5 +1,6 @@
 "use client";
 
+import { decompressFromEncodedURIComponent, compressToEncodedURIComponent } from "lz-string";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type Energy = "deep" | "light" | "stuck";
@@ -216,6 +217,11 @@ type AppState = {
   updates: Update[];
   decisions: Decision[];
   snapshots: Snapshot[];
+};
+
+type BootPayload = {
+  state: AppState;
+  source: "default" | "local" | "share";
 };
 
 type ScoredWorkstream = Workstream & {
@@ -551,9 +557,11 @@ const commitmentTone: Record<CommitmentLane, string> = {
 };
 
 export function CollaborationCockpit() {
-  const bootState = getBootState();
+  const bootPayload = getBootPayload();
+  const bootState = bootPayload.state;
   const [state, setState] = useState<AppState>(bootState);
   const [selectedId, setSelectedId] = useState<string>(bootState.workstreams[0]?.id ?? "");
+  const [isSharedView, setIsSharedView] = useState(bootPayload.source === "share");
   const [briefMode, setBriefMode] = useState<BriefMode>("alignment-agenda");
   const [coachMode, setCoachMode] = useState<CoachMode>("quick-sync");
   const [selectedCollaborator, setSelectedCollaborator] = useState("David");
@@ -586,8 +594,9 @@ export function CollaborationCockpit() {
   const importRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    if (isSharedView) return;
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
+  }, [isSharedView, state]);
 
   useEffect(() => {
     if (!copyState) return;
@@ -859,10 +868,12 @@ export function CollaborationCockpit() {
   function seedDemo() {
     window.localStorage.removeItem(STORAGE_KEY);
     LEGACY_KEYS.forEach((key) => window.localStorage.removeItem(key));
+    clearSharedHash();
     setState(initialState);
     setSelectedId(initialState.workstreams[0]?.id ?? "");
     setBriefMode("alignment-agenda");
     setCoachMode("quick-sync");
+    setIsSharedView(false);
   }
 
   async function copyText(text: string, label: string) {
@@ -890,6 +901,37 @@ export function CollaborationCockpit() {
     URL.revokeObjectURL(url);
   }
 
+  function clearSharedHash() {
+    const url = new URL(window.location.href);
+    url.hash = "";
+    window.history.replaceState({}, "", url.toString());
+  }
+
+  function restoreLocalBoard() {
+    const stored = getStoredState();
+    clearSharedHash();
+    setState(stored);
+    setSelectedId(stored.workstreams[0]?.id ?? "");
+    setIsSharedView(false);
+  }
+
+  function saveSharedBoardToLocal() {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    clearSharedHash();
+    setIsSharedView(false);
+    setCopyState("shared board saved locally");
+  }
+
+  function getShareUrl() {
+    const url = new URL(window.location.href);
+    url.hash = `share=${serializeState(state)}`;
+    return url.toString();
+  }
+
+  async function copyShareLink() {
+    await copyText(getShareUrl(), "share link");
+  }
+
   function triggerImport() {
     importRef.current?.click();
   }
@@ -913,6 +955,8 @@ export function CollaborationCockpit() {
         };
         setState(nextState);
         setSelectedId(nextState.workstreams[0]?.id ?? "");
+        setIsSharedView(false);
+        clearSharedHash();
       } catch {
         window.alert("That file is not valid Collab Cockpit JSON.");
       }
@@ -934,6 +978,20 @@ export function CollaborationCockpit() {
               <p className="max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
                 Prioritize work, expose collaboration drag, prep a useful agenda, and generate copy-ready handoffs without turning planning into theater.
               </p>
+              {isSharedView ? (
+                <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+                  <p className="font-semibold">Viewing a shared cockpit snapshot.</p>
+                  <p className="mt-1 leading-6 opacity-90">This board came from a share link, so edits stay in this tab until you save them locally.</p>
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <button type="button" onClick={saveSharedBoardToLocal} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                      Save shared board locally
+                    </button>
+                    <button type="button" onClick={restoreLocalBoard} className="rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-medium text-blue-900 transition hover:bg-blue-100">
+                      Back to my local board
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 lg:min-w-[560px]">
               <MetricCard label="Collab health" value={`${collaborationHealth}%`} note={healthDelta ? `${healthDelta > 0 ? "+" : ""}${healthDelta} vs last snapshot` : "No prior snapshot yet"} />
@@ -1423,6 +1481,9 @@ export function CollaborationCockpit() {
                 </button>
                 <button type="button" onClick={exportJson} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
                   Export JSON
+                </button>
+                <button type="button" onClick={copyShareLink} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                  Copy share link
                 </button>
                 <button type="button" onClick={() => copyText(JSON.stringify(state, null, 2), "JSON")} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
                   Copy JSON
@@ -4442,23 +4503,62 @@ function normalizeWorkstream(workstream: Partial<Workstream>) {
   } satisfies Workstream;
 }
 
-function getBootState() {
+function normalizeAppState(parsed: Partial<AppState> | null | undefined) {
+  if (!parsed) return initialState;
+
+  return {
+    workstreams: Array.isArray(parsed.workstreams) ? parsed.workstreams.map(normalizeWorkstream) : initialState.workstreams,
+    updates: Array.isArray(parsed.updates) ? parsed.updates : initialState.updates,
+    decisions: Array.isArray(parsed.decisions) ? parsed.decisions : initialState.decisions,
+    snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots : [],
+  } satisfies AppState;
+}
+
+function serializeState(state: AppState) {
+  return compressToEncodedURIComponent(JSON.stringify(state));
+}
+
+function parseSharedState() {
+  if (typeof window === "undefined") return null;
+
+  const hash = window.location.hash.replace(/^#/, "");
+  if (!hash.startsWith("share=")) return null;
+
+  const encoded = hash.slice("share=".length);
+  const decompressed = decompressFromEncodedURIComponent(encoded);
+  if (!decompressed) return null;
+
+  try {
+    return normalizeAppState(JSON.parse(decompressed) as Partial<AppState>);
+  } catch {
+    return null;
+  }
+}
+
+function getStoredState() {
   if (typeof window === "undefined") return initialState;
 
   const stored = window.localStorage.getItem(STORAGE_KEY) ?? LEGACY_KEYS.map((key) => window.localStorage.getItem(key)).find(Boolean);
   if (!stored) return initialState;
 
   try {
-    const parsed = JSON.parse(stored) as Partial<AppState>;
-    return {
-      workstreams: Array.isArray(parsed.workstreams) ? parsed.workstreams.map(normalizeWorkstream) : initialState.workstreams,
-      updates: Array.isArray(parsed.updates) ? parsed.updates : initialState.updates,
-      decisions: Array.isArray(parsed.decisions) ? parsed.decisions : initialState.decisions,
-      snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots : [],
-    } satisfies AppState;
+    return normalizeAppState(JSON.parse(stored) as Partial<AppState>);
   } catch {
     return initialState;
   }
+}
+
+function getBootPayload(): BootPayload {
+  if (typeof window === "undefined") return { state: initialState, source: "default" };
+
+  const shared = parseSharedState();
+  if (shared) {
+    return { state: shared, source: "share" };
+  }
+
+  const stored = getStoredState();
+  const source = stored === initialState ? "default" : "local";
+  return { state: stored, source };
 }
 
 const inputClass =

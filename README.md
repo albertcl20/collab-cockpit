@@ -20,6 +20,7 @@ A lightweight collaboration cockpit for David and Albert.
 - Saves local snapshots so you can compare collaboration health over time, including a simple health trend chart
 - Supports local JSON export/import so the board is easy to back up or move
 - Stores data locally in the browser for fast, private use
+- Supports shareable cockpit links that carry the exact board state for handoffs without needing JSON exports
 - Supports a simple password gate for deployed environments via `APP_PASSWORD`
 
 ## Local development
