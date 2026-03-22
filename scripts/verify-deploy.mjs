@@ -51,8 +51,8 @@ async function main() {
         throw new Error(`${route} returned ${response.status}`);
       }
       const body = await response.text();
-      if (!body.includes('Decision sprint')) {
-        throw new Error('Home page is up but missing Decision sprint content');
+      if (!body.includes('Decision sprint') || !body.includes('Collaboration debt queue')) {
+        throw new Error('Home page is up but missing expected collaboration features');
       }
     } else if (response.status !== 200) {
       throw new Error(`${route} returned ${response.status}`);

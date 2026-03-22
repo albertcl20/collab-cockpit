@@ -314,6 +314,29 @@ type CommitmentPulse = {
   copyBlock: string;
 };
 
+type CollaborationDebtItem = {
+  id: string;
+  title: string;
+  kind: "blocker" | "decision" | "dependency" | "clarity" | "overlap";
+  score: number;
+  fixInMinutes: 15 | 30 | 45;
+  owner: string;
+  whyExpensive: string;
+  exactFix: string;
+  proof: string[];
+  copyBlock: string;
+};
+
+type CollaborationDebtQueue = {
+  items: CollaborationDebtItem[];
+  headline: string;
+  totalCost: number;
+  fastWins: number;
+  strategicFixes: number;
+  ownerHotspot: string;
+  copyBlock: string;
+};
+
 type CollaboratorBrief = {
   name: string;
   score: number;
@@ -631,6 +654,7 @@ export function CollaborationCockpit() {
   const protocolPlanner = useMemo(() => buildProtocolPlanner(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const nudgeQueue = useMemo(() => buildNudgeQueue(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const commitmentPulse = useMemo(() => buildCommitmentPulse(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
+  const collaborationDebtQueue = useMemo(() => buildCollaborationDebtQueue(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const collaboratorMap = useMemo(() => buildCollaboratorMap(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const collaboratorPrepPack = useMemo(
     () => buildCollaboratorPrepPack({ briefs: collaboratorMap.briefs, workstreams: scoredWorkstreams, decisions: state.decisions, collaborator: selectedCollaborator }),
@@ -1181,6 +1205,66 @@ export function CollaborationCockpit() {
                     <textarea readOnly className={`${inputClass} mt-4 min-h-28 bg-white/80 font-mono text-sm`} value={item.followUp} />
                   </div>
                 )) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">No commitments under stress right now. Either the board is clean or it is hiding the truth unusually well.</p>}
+              </div>
+            </Panel>
+
+            <Panel title="Collaboration debt queue" subtitle="Ranks the coordination mess worth fixing first, so David and Albert can buy back leverage instead of doing more reactive follow-ups.">
+              <div className="grid gap-4">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <MetricCard label="Debt items" value={String(collaborationDebtQueue.items.length)} note={collaborationDebtQueue.headline} />
+                  <MetricCard label="Fast wins" value={String(collaborationDebtQueue.fastWins)} note="Fixes that should take 15 minutes, not a committee" />
+                  <MetricCard label="Strategic fixes" value={String(collaborationDebtQueue.strategicFixes)} note="Worth a deeper cleanup pass" />
+                  <MetricCard label="Owner hotspot" value={collaborationDebtQueue.ownerHotspot} note={`${collaborationDebtQueue.totalCost} debt points across the active queue`} />
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">What to clean up first</h3>
+                      <p className="mt-1 text-sm text-slate-600">{collaborationDebtQueue.headline}</p>
+                    </div>
+                    <button type="button" onClick={() => copyText(collaborationDebtQueue.copyBlock, "collaboration debt queue")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                      Copy debt queue
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-3">
+                  {collaborationDebtQueue.items.length ? collaborationDebtQueue.items.map((item) => (
+                    <div key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-sm font-semibold text-slate-900">{item.title}</h3>
+                            <Badge tone={item.kind === "blocker" ? nudgeTone.high : item.kind === "decision" ? commitmentTone["due-now"] : item.kind === "overlap" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-blue-200 bg-blue-50 text-blue-900"}>{item.kind}</Badge>
+                            <Badge>{item.score} debt</Badge>
+                            <Badge>{item.fixInMinutes} min fix</Badge>
+                          </div>
+                          <p className="mt-2 text-sm leading-6 text-slate-700">{item.whyExpensive}</p>
+                        </div>
+                        <button type="button" onClick={() => copyText(item.copyBlock, `${item.title} debt fix`)} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                          Copy fix
+                        </button>
+                      </div>
+                      <div className="mt-4 grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
+                        <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+                          <MiniStat label="Owner" value={item.owner} />
+                          <MiniStat label="Fix time" value={`${item.fixInMinutes}m`} />
+                          <MiniStat label="Signals" value={String(item.proof.length)} />
+                        </div>
+                        <div className="space-y-3 text-sm text-slate-700">
+                          <p><span className="font-medium text-slate-900">Exact fix:</span> {item.exactFix}</p>
+                          <div>
+                            <p className="font-medium text-slate-900">Proof</p>
+                            <ul className="mt-2 space-y-1">
+                              {item.proof.map((proof) => <li key={`${item.id}-${proof}`}>• {proof}</li>)}
+                            </ul>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">No meaningful collaboration debt detected. Either the board is clean or it is suspiciously underfilled.</p>}
+                </div>
               </div>
             </Panel>
 
@@ -4266,6 +4350,188 @@ function buildCommitmentPulse(workstreams: ScoredWorkstream[], decisions: Decisi
   ].join("\n\n");
 
   return { items, dueNowCount, thisWeekCount, waitingCount, ownerLoad, headline, copyBlock };
+}
+
+function buildCollaborationDebtQueue(workstreams: ScoredWorkstream[], decisions: Decision[]): CollaborationDebtQueue {
+  const debt: CollaborationDebtItem[] = [];
+  const overlapRadar = buildOverlapRadar(workstreams);
+
+  for (const item of workstreams) {
+    const owner = item.owner || inferNudgeTarget(item);
+    const proof = [
+      `status ${item.status}`,
+      `drag ${item.drag}%`,
+      `readiness ${item.readiness}%`,
+      item.waitingOn.trim() ? `waiting on ${item.waitingOn}` : '',
+      item.blocker.trim() ? `blocker: ${normalizeSentence(item.blocker)}` : '',
+      item.decisionNeeded.trim() ? `decision needed: ${normalizeSentence(item.decisionNeeded)}` : '',
+      item.nextStep.trim().length < 28 ? `next step is still vague` : '',
+      item.ageDays >= 3 ? `stale for ${item.ageDays} days` : '',
+    ].filter(Boolean) as string[];
+
+    if (item.status === 'blocked' || item.blocker.trim()) {
+      const score = clamp(Math.round(item.score * 0.5 + item.drag * 0.55 + (item.waitingOn.trim() ? 10 : 0)), 52, 99);
+      debt.push({
+        id: `${item.id}-debt-blocker`,
+        title: item.name,
+        kind: 'blocker',
+        score,
+        fixInMinutes: item.waitingOn.trim() ? 30 : 15,
+        owner,
+        whyExpensive: `${item.name} is blocked, so every surrounding update risks becoming status theater until someone owns the unblock move.`,
+        exactFix: `Rewrite ${item.name} into one blocker, one named owner, one deadline, and one fallback next step. If the blocker is really a decision, move it into a 20-minute decision review instead of another async loop.`,
+        proof,
+        copyBlock: [
+          'COLLABORATION DEBT FIX',
+          '',
+          `Item: ${item.name}`,
+          `Kind: blocker`,
+          `Owner: ${owner}`,
+          `Why expensive: ${item.name} is blocked and still consuming coordination bandwidth.`,
+          `Exact fix: Rewrite the blocker, owner, deadline, and fallback next step in one pass.`,
+          `Proof: ${proof.join(' | ')}`,
+        ].join('\n'),
+      });
+    }
+
+    if (item.waitingOn.trim() && item.status !== 'blocked') {
+      const score = clamp(Math.round(item.score * 0.42 + item.drag * 0.45 + item.ageDays * 3), 45, 92);
+      debt.push({
+        id: `${item.id}-debt-dependency`,
+        title: item.name,
+        kind: 'dependency',
+        score,
+        fixInMinutes: 15,
+        owner,
+        whyExpensive: `${item.name} is waiting on ${item.waitingOn}, which means the real blocker is now response latency plus ambiguity about what exactly is needed.`,
+        exactFix: `Send one direct follow-up naming the exact deliverable needed from ${item.waitingOn}, the date it is needed by, and what happens if the answer is no.`,
+        proof,
+        copyBlock: [
+          'COLLABORATION DEBT FIX',
+          '',
+          `Item: ${item.name}`,
+          `Kind: dependency`,
+          `Owner: ${owner}`,
+          `Why expensive: waiting dependencies are silently stretching the cycle time.`,
+          `Exact fix: send a direct dependency message with explicit ask, date, and fallback.`,
+          `Proof: ${proof.join(' | ')}`,
+        ].join('\n'),
+      });
+    }
+
+    if (item.nextStep.trim().length < 28 || !item.desiredOutcome.trim() || item.confidence <= 5) {
+      const score = clamp(Math.round(item.score * 0.38 + (100 - item.readiness) * 0.45 + (item.confidence <= 5 ? 10 : 0)), 40, 88);
+      debt.push({
+        id: `${item.id}-debt-clarity`,
+        title: item.name,
+        kind: 'clarity',
+        score,
+        fixInMinutes: 15,
+        owner,
+        whyExpensive: `${item.name} is under-specified enough that every handoff around it costs extra explanation.`,
+        exactFix: `Tighten the workstream in one edit pass: rewrite the desired outcome, expand the next step into something testable, and either raise confidence with evidence or admit what is missing.`,
+        proof,
+        copyBlock: [
+          'COLLABORATION DEBT FIX',
+          '',
+          `Item: ${item.name}`,
+          `Kind: clarity`,
+          `Owner: ${owner}`,
+          `Why expensive: vague work creates repeat interpretation overhead.`,
+          `Exact fix: rewrite outcome, next step, and confidence basis in one pass.`,
+          `Proof: ${proof.join(' | ')}`,
+        ].join('\n'),
+      });
+    }
+  }
+
+  for (const decision of decisions) {
+    const overdue = isPast(decision.deadline);
+    const daysLeft = daysUntil(decision.deadline);
+    const match = matchDecisionWorkstream(decision, workstreams);
+    const owner = match?.owner || inferOwner(decision);
+    const proof = [
+      `deadline ${prettyDate(decision.deadline)}`,
+      `confidence ${decision.confidence}/10`,
+      overdue ? 'already overdue' : `${daysLeft} days left`,
+      match ? `linked workstream ${match.name}` : 'no clear workstream linked',
+      decision.impactArea ? `impact area ${decision.impactArea}` : '',
+    ].filter(Boolean) as string[];
+
+    if (!overdue && daysLeft > 4 && decision.confidence >= 7) continue;
+
+    const score = clamp(Math.round((overdue ? 28 : 12) + (10 - decision.confidence) * 5 + ((match?.drag ?? 24) * 0.5)), 48, 97);
+    debt.push({
+      id: `${decision.id}-debt-decision`,
+      title: decision.topic,
+      kind: 'decision',
+      score,
+      fixInMinutes: overdue ? 45 : 30,
+      owner,
+      whyExpensive: `${decision.topic} is still unresolved, so execution keeps paying uncertainty tax on ${match?.name || decision.impactArea || 'the surrounding work'}.`,
+      exactFix: `Run a short decision sprint for ${decision.topic}: bring the missing evidence, make the call, and rewrite the next move before the conversation ends.`,
+      proof,
+      copyBlock: [
+        'COLLABORATION DEBT FIX',
+        '',
+        `Item: ${decision.topic}`,
+        `Kind: decision`,
+        `Owner: ${owner}`,
+        `Why expensive: unresolved decisions are leaking into execution.`,
+        `Exact fix: hold a short decision sprint and leave with a call plus next move.`,
+        `Proof: ${proof.join(' | ')}`,
+      ].join('\n'),
+    });
+  }
+
+  for (const item of overlapRadar.items.slice(0, 2)) {
+    debt.push({
+      id: `${item.id}-debt-overlap`,
+      title: `${item.leftName} ↔ ${item.rightName}`,
+      kind: 'overlap',
+      score: clamp(item.score, 46, 95),
+      fixInMinutes: 30,
+      owner: 'Shared',
+      whyExpensive: item.collisionRisk,
+      exactFix: item.consolidationMove,
+      proof: item.sharedSignals,
+      copyBlock: item.copyBlock,
+    });
+  }
+
+  const unique = new Map<string, CollaborationDebtItem>();
+  for (const item of debt.sort((a, b) => b.score - a.score)) {
+    const key = `${item.kind}:${item.title}`;
+    if (!unique.has(key)) unique.set(key, item);
+  }
+
+  const items = [...unique.values()].sort((a, b) => b.score - a.score).slice(0, 8);
+  const totalCost = items.reduce((sum, item) => sum + item.score, 0);
+  const fastWins = items.filter((item) => item.fixInMinutes === 15).length;
+  const strategicFixes = items.filter((item) => item.fixInMinutes >= 30).length;
+  const ownerCounts = items.reduce<Record<string, number>>((acc, item) => {
+    acc[item.owner] = (acc[item.owner] ?? 0) + 1;
+    return acc;
+  }, {});
+  const hotspot = Object.entries(ownerCounts).sort((a, b) => b[1] - a[1])[0];
+  const ownerHotspot = hotspot ? `${hotspot[0]} ×${hotspot[1]}` : 'Balanced';
+  const headline = items.length
+    ? `${items[0].title} is the most expensive piece of collaboration debt right now. Clean that first, then take the 15-minute fixes before inventing new process.`
+    : 'No major collaboration debt detected.';
+  const copyBlock = items.length
+    ? [
+        'COLLABORATION DEBT QUEUE',
+        '',
+        headline,
+        '',
+        ...items.map((item, index) => `${index + 1}. ${item.title} — ${item.kind} — ${item.score} debt — ${item.fixInMinutes} min
+Owner: ${item.owner}
+Why expensive: ${item.whyExpensive}
+Exact fix: ${item.exactFix}`),
+      ].join('\n\n')
+    : headline;
+
+  return { items, headline, totalCost, fastWins, strategicFixes, ownerHotspot, copyBlock };
 }
 
 function buildCalendarExportPlan({
