@@ -261,6 +261,28 @@ type OperatingMemo = {
   copyBlock: string;
 };
 
+type DelegationLane = "david" | "albert" | "shared" | "external";
+
+type DelegationItem = {
+  id: string;
+  lane: DelegationLane;
+  workstreamName: string;
+  reason: string;
+  exactMove: string;
+  needsReply: string;
+  copyBlock: string;
+  urgency: "high" | "medium" | "low";
+};
+
+type DelegationBoard = {
+  headline: string;
+  david: DelegationItem[];
+  albert: DelegationItem[];
+  shared: DelegationItem[];
+  external: DelegationItem[];
+  copyBlock: string;
+};
+
 type ProtocolRecommendation = {
   id: string;
   workstreamName: string;
@@ -726,6 +748,10 @@ export function CollaborationCockpit() {
   const operatingMemo = useMemo(
     () => buildOperatingMemo({ workstreams: scoredWorkstreams, decisions: state.decisions, updates: state.updates, nudges: nudgeQueue.items, agenda }),
     [scoredWorkstreams, state.decisions, state.updates, nudgeQueue.items, agenda]
+  );
+  const delegationBoard = useMemo(
+    () => buildDelegationBoard({ workstreams: scoredWorkstreams, decisions: state.decisions }),
+    [scoredWorkstreams, state.decisions]
   );
   const handoffDoctor = useMemo(
     () => analyzeHandoffDraft({ draft: handoffDraft, focusNow, selected }),
@@ -1309,6 +1335,67 @@ export function CollaborationCockpit() {
                     <textarea readOnly className={`${inputClass} mt-4 min-h-28 bg-white/80 font-mono text-sm`} value={item.message} />
                   </div>
                 )) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">No active nudges. Either collaboration is unusually clean or the board is under-reporting pain.</p>}
+              </div>
+            </Panel>
+
+            <Panel title="Delegation board" subtitle="Shows what David should decide, what Albert can run with now, what needs a joint pass, and what is blocked on someone else.">
+              <div className="grid gap-4">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <MetricCard label="David queue" value={String(delegationBoard.david.length)} note={delegationBoard.david[0]?.workstreamName ?? "No decision-heavy work right now"} />
+                  <MetricCard label="Albert queue" value={String(delegationBoard.albert.length)} note={delegationBoard.albert[0]?.workstreamName ?? "Nothing is cleanly delegatable yet"} />
+                  <MetricCard label="Shared passes" value={String(delegationBoard.shared.length)} note={delegationBoard.shared[0]?.workstreamName ?? "No obvious co-pilot work"} />
+                  <MetricCard label="External waits" value={String(delegationBoard.external.length)} note={delegationBoard.external[0]?.workstreamName ?? "No outside reply blocking the board"} />
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">Delegation readout</h3>
+                      <p className="mt-1 text-sm text-slate-600">{delegationBoard.headline}</p>
+                    </div>
+                    <button type="button" onClick={() => copyText(delegationBoard.copyBlock, "delegation board")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                      Copy delegation plan
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 xl:grid-cols-2">
+                  {[
+                    { title: "David should own now", items: delegationBoard.david },
+                    { title: "Albert can run now", items: delegationBoard.albert },
+                    { title: "Needs a shared pass", items: delegationBoard.shared },
+                    { title: "Waiting on someone else", items: delegationBoard.external },
+                  ].map((group) => (
+                    <div key={group.title} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <h3 className="text-base font-semibold text-slate-900">{group.title}</h3>
+                        <Badge>{group.items.length}</Badge>
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        {group.items.length ? group.items.map((item) => (
+                          <div key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h4 className="text-sm font-semibold text-slate-900">{item.workstreamName}</h4>
+                                  <Badge tone={nudgeTone[item.urgency]}>{item.urgency}</Badge>
+                                </div>
+                                <p className="mt-2 text-sm leading-6 text-slate-700">{item.reason}</p>
+                              </div>
+                              <button type="button" onClick={() => copyText(item.copyBlock, `${item.workstreamName} delegation note`)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                                Copy note
+                              </button>
+                            </div>
+                            <div className="mt-3 space-y-2 text-sm text-slate-700">
+                              <p><span className="font-medium text-slate-900">Exact move:</span> {item.exactMove}</p>
+                              <p><span className="font-medium text-slate-900">Needs reply:</span> {item.needsReply}</p>
+                            </div>
+                          </div>
+                        )) : <p className="text-sm text-slate-500">Nothing in this lane right now.</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </Panel>
 
@@ -3730,6 +3817,113 @@ function buildSevenDayPlan(workstreams: ScoredWorkstream[], decisions: Decision[
       why: overdue ? `It has been overdue since ${prettyDate(overdue.deadline)}.` : "Decision drift quietly taxes execution.",
     },
   ];
+}
+
+function buildDelegationBoard({
+  workstreams,
+  decisions,
+}: {
+  workstreams: ScoredWorkstream[];
+  decisions: Decision[];
+}): DelegationBoard {
+  const david: DelegationItem[] = [];
+  const albert: DelegationItem[] = [];
+  const shared: DelegationItem[] = [];
+  const external: DelegationItem[] = [];
+
+  const topDecisions = decisions
+    .map((decision) => ({ decision, match: matchDecisionWorkstream(decision, workstreams) }))
+    .sort((a, b) => {
+      const aPressure = (isPast(a.decision.deadline) ? 20 : 0) + (10 - a.decision.confidence);
+      const bPressure = (isPast(b.decision.deadline) ? 20 : 0) + (10 - b.decision.confidence);
+      return bPressure - aPressure;
+    });
+
+  for (const item of workstreams.slice(0, 8)) {
+    const urgency: DelegationItem["urgency"] = item.status === "blocked" || item.score >= 72 ? "high" : item.score >= 58 ? "medium" : "low";
+    const decisionMatch = topDecisions.find(({ match }) => match?.id === item.id)?.decision;
+
+    if (item.waitingOn.trim()) {
+      external.push({
+        id: `${item.id}-external`,
+        lane: "external",
+        workstreamName: item.name,
+        urgency,
+        reason: `${item.name} is waiting on ${item.waitingOn}, so pushing harder internally will not magically unstick it.`,
+        exactMove: item.blocker || item.nextStep,
+        needsReply: `Need a concrete reply from ${item.waitingOn}.`,
+        copyBlock: [`EXTERNAL FOLLOW-UP`, "", `Workstream: ${item.name}`, `Waiting on: ${item.waitingOn}`, `Why now: ${item.blocker || whyNow(item)}`, `Exact move: ${item.nextStep}`].join("\n"),
+      });
+      continue;
+    }
+
+    if (item.decisionNeeded.trim() || decisionMatch) {
+      david.push({
+        id: `${item.id}-david`,
+        lane: "david",
+        workstreamName: item.name,
+        urgency,
+        reason: `${item.name} is decision-shaped right now. More execution without a call from David risks elegant rework.`,
+        exactMove: item.decisionNeeded || decisionMatch?.topic || item.nextStep,
+        needsReply: `Need David to confirm the call or sharpen the decision bar.`,
+        copyBlock: [`DAVID DECISION NOTE`, "", `Workstream: ${item.name}`, `Decision: ${item.decisionNeeded || decisionMatch?.topic || "Confirm the current path"}`, `Why now: ${item.blocker || whyNow(item)}`, `Next move after reply: ${item.nextStep}`].join("\n"),
+      });
+      continue;
+    }
+
+    if (item.readiness >= 72 && item.confidence >= 6 && item.status !== "done") {
+      albert.push({
+        id: `${item.id}-albert`,
+        lane: "albert",
+        workstreamName: item.name,
+        urgency,
+        reason: `${item.name} is specified well enough that Albert can push it without another clarification round.`,
+        exactMove: item.nextStep,
+        needsReply: `No immediate reply needed unless the outcome changes.`,
+        copyBlock: [`ALBERT EXECUTION NOTE`, "", `Workstream: ${item.name}`, `Why this is delegatable: readiness ${item.readiness}% · confidence ${item.confidence}/10`, `Exact move: ${item.nextStep}`, `Desired outcome: ${item.desiredOutcome || "Still worth writing down more sharply."}`].join("\n"),
+      });
+      continue;
+    }
+
+    shared.push({
+      id: `${item.id}-shared`,
+      lane: "shared",
+      workstreamName: item.name,
+      urgency,
+      reason: `${item.name} still needs a short shared pass to tighten the ask, owner, or success bar before either of you runs too far with it.`,
+      exactMove: item.nextStep || "Rewrite the next step and desired outcome together.",
+      needsReply: `Need a 5-10 minute joint cleanup, not a long meeting.`,
+      copyBlock: [`SHARED CLEANUP NOTE`, "", `Workstream: ${item.name}`, `Reason: ${item.blocker || whyNow(item)}`, `Shared move: ${item.nextStep || "Rewrite next step"}`, `Missing: ${missingPieces(item).join(", ") || "No major gap logged."}`].join("\n"),
+    });
+  }
+
+  const headline = david[0]
+    ? `${david[0].workstreamName} needs David-level judgment first. ${albert[0] ? `${albert[0].workstreamName} is clean enough for Albert to run in parallel.` : "Nothing else is truly cleanly delegatable yet."}`
+    : albert[0]
+      ? `${albert[0].workstreamName} is the cleanest thing Albert can push now without waiting on David.`
+      : external[0]
+        ? `${external[0].workstreamName} is blocked on an outside reply, so chasing internal motion would be fake progress.`
+        : `The board is mostly shared cleanup work right now. Tighten the inputs before pretending delegation will save you.`;
+
+  const copyBlock = [
+    "DELEGATION BOARD",
+    "",
+    `Headline: ${headline}`,
+    "",
+    `David: ${david.length ? david.map((item) => `${item.workstreamName} → ${item.exactMove}`).join(" | ") : "None"}`,
+    `Albert: ${albert.length ? albert.map((item) => `${item.workstreamName} → ${item.exactMove}`).join(" | ") : "None"}`,
+    `Shared: ${shared.length ? shared.map((item) => `${item.workstreamName} → ${item.exactMove}`).join(" | ") : "None"}`,
+    `External: ${external.length ? external.map((item) => `${item.workstreamName} → ${item.needsReply}`).join(" | ") : "None"}`,
+  ].join("\n");
+
+  return {
+    headline,
+    david: david.slice(0, 4),
+    albert: albert.slice(0, 4),
+    shared: shared.slice(0, 4),
+    external: external.slice(0, 4),
+    copyBlock,
+  };
 }
 
 function buildOperatingMemo({

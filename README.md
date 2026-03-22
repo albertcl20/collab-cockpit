@@ -12,6 +12,7 @@ A lightweight collaboration cockpit for David and Albert.
 - Adds a conversation translator that turns rough chat threads into extracted actions, decision candidates, a crisp digest, and a ready-to-create workstream
 - Adds a protocol planner that recommends which work deserves async handling, a quick sync, a deep dive, or a decision review
 - Adds a collaborator map that spots who is overloaded, who is bottlenecking execution, and drafts exact outreach for each person
+- Adds a delegation board that makes the handoff explicit: what David should decide, what Albert can run, what needs a shared pass, and what is blocked on someone else
 - Adds an operating memo that splits the board into the exact brief for David, the exact work for Albert, and the one stakeholder ping worth sending next
 - Adds a commitment pulse that tracks which promises are due now, which are drifting this week, and what exact follow-up to send before execution silently slips
 - Adds a collaboration debt queue that ranks the most expensive blockers, dependencies, decision gaps, vague handoffs, and overlap so the team knows what to clean up first
