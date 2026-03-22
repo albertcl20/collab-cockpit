@@ -314,6 +314,22 @@ type CommitmentPulse = {
   copyBlock: string;
 };
 
+type FocusMode = "daily-sync" | "async-cleanup" | "one-on-one" | "strategy-review" | "full-cockpit";
+
+type FocusModePlaybook = {
+  mode: FocusMode;
+  headline: string;
+  reason: string;
+  primaryOutcome: string;
+  panelOrder: string[];
+  quickWins: string[];
+  watchouts: string[];
+  copyActions: {
+    label: string;
+    text: string;
+  }[];
+};
+
 type CollaborationDebtItem = {
   id: string;
   title: string;
@@ -587,6 +603,7 @@ export function CollaborationCockpit() {
   const [isSharedView, setIsSharedView] = useState(bootPayload.source === "share");
   const [briefMode, setBriefMode] = useState<BriefMode>("alignment-agenda");
   const [coachMode, setCoachMode] = useState<CoachMode>("quick-sync");
+  const [focusMode, setFocusMode] = useState<FocusMode>("daily-sync");
   const [selectedCollaborator, setSelectedCollaborator] = useState("David");
   const [snapshotNote, setSnapshotNote] = useState("");
   const [copyState, setCopyState] = useState<string>("");
@@ -720,6 +737,39 @@ export function CollaborationCockpit() {
       staleCount,
     }),
     [latestSnapshot, scoredWorkstreams, state.decisions, collaborationHealth, blockedCount, staleCount]
+  );
+  const focusModePlaybook = useMemo(
+    () =>
+      buildFocusModePlaybook({
+        mode: focusMode,
+        focusNow,
+        selected,
+        workstreams: scoredWorkstreams,
+        protocolPlanner,
+        coachPlan,
+        collaboratorPrepPack,
+        collaborationDebtQueue,
+        commitmentPulse,
+        decisionSprint,
+        collaborationRetro,
+        handoffBrief,
+        agenda,
+      }),
+    [
+      focusMode,
+      focusNow,
+      selected,
+      scoredWorkstreams,
+      protocolPlanner,
+      coachPlan,
+      collaboratorPrepPack,
+      collaborationDebtQueue,
+      commitmentPulse,
+      decisionSprint,
+      collaborationRetro,
+      handoffBrief,
+      agenda,
+    ]
   );
 
   useEffect(() => {
@@ -1022,6 +1072,92 @@ export function CollaborationCockpit() {
               <MetricCard label="Top focus" value={focusNow ? String(focusNow.score) : "—"} note={focusNow?.name ?? "No workstreams yet"} />
               <MetricCard label="Blocked items" value={String(blockedCount)} note={blockedCount ? "Needs a real unblock path" : "Board is clear"} />
               <MetricCard label="Decision pressure" value={String(overdueDecisions)} note={overdueDecisions ? `Overdue decisions · confidence ${avgConfidence}%` : `Nothing overdue · confidence ${avgConfidence}%`} />
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl space-y-2">
+                <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-blue-700">
+                  Focus mode switchboard
+                </span>
+                <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Pick the collaboration moment. The cockpit rewrites itself into a usable run sheet.</h2>
+                <p className="text-sm leading-6 text-slate-600 sm:text-base">
+                  Instead of asking David to interpret twenty panels while context-switching, this mode view turns the current board into a crisp sequence, fast wins, and copy-ready outputs for the situation at hand.
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[360px]">
+                <MetricCard label="Mode" value={focusModePlaybook.mode.replace('-', ' ')} note={focusModePlaybook.primaryOutcome} />
+                <MetricCard label="Run steps" value={String(focusModePlaybook.panelOrder.length)} note={focusModePlaybook.reason} />
+                <MetricCard label="Quick copies" value={String(focusModePlaybook.copyActions.length)} note={focusModePlaybook.quickWins[0] ?? "No obvious shortcut yet"} />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <ModePill active={focusMode === "daily-sync"} onClick={() => setFocusMode("daily-sync")}>Daily sync</ModePill>
+              <ModePill active={focusMode === "async-cleanup"} onClick={() => setFocusMode("async-cleanup")}>Async cleanup</ModePill>
+              <ModePill active={focusMode === "one-on-one"} onClick={() => setFocusMode("one-on-one")}>1:1 prep</ModePill>
+              <ModePill active={focusMode === "strategy-review"} onClick={() => setFocusMode("strategy-review")}>Strategy review</ModePill>
+              <ModePill active={focusMode === "full-cockpit"} onClick={() => setFocusMode("full-cockpit")}>Full cockpit</ModePill>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <p className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">What this mode is optimizing for</p>
+                <h3 className="mt-2 text-xl font-semibold text-slate-900">{focusModePlaybook.headline}</h3>
+                <p className="mt-3 text-sm leading-6 text-slate-600">{focusModePlaybook.reason}</p>
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <p className="text-sm font-semibold text-slate-900">Primary outcome</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">{focusModePlaybook.primaryOutcome}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <p className="text-sm font-semibold text-slate-900">Recommended panel order</p>
+                    <ol className="mt-2 space-y-2 text-sm leading-6 text-slate-600">
+                      {focusModePlaybook.panelOrder.map((item, index) => (
+                        <li key={item}>
+                          <span className="font-medium text-slate-900">{index + 1}.</span> {item}
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-4">
+                <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5">
+                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-emerald-700">Fast wins</p>
+                  <ul className="mt-3 space-y-2 text-sm leading-6 text-emerald-900">
+                    {focusModePlaybook.quickWins.map((item) => (
+                      <li key={item}>• {item}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="rounded-3xl border border-amber-200 bg-amber-50 p-5">
+                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-amber-700">Watchouts</p>
+                  <ul className="mt-3 space-y-2 text-sm leading-6 text-amber-900">
+                    {focusModePlaybook.watchouts.map((item) => (
+                      <li key={item}>• {item}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-3">
+              {focusModePlaybook.copyActions.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => copyText(item.text, item.label)}
+                  className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-left transition hover:bg-white"
+                >
+                  <span className="block text-sm font-semibold text-slate-900">{item.label}</span>
+                  <span className="mt-1 block text-sm leading-6 text-slate-600">Copy the exact artifact most useful for this moment.</span>
+                </button>
+              ))}
             </div>
           </div>
         </section>
@@ -2950,6 +3086,161 @@ function buildCollaborationRetro({
 
 function retroSeverityWeight(severity: CollaborationRetroItem["severity"]) {
   return severity === "high" ? 3 : severity === "medium" ? 2 : 1;
+}
+
+function buildFocusModePlaybook({
+  mode,
+  focusNow,
+  selected,
+  workstreams,
+  protocolPlanner,
+  coachPlan,
+  collaboratorPrepPack,
+  collaborationDebtQueue,
+  commitmentPulse,
+  decisionSprint,
+  collaborationRetro,
+  handoffBrief,
+  agenda,
+}: {
+  mode: FocusMode;
+  focusNow?: ScoredWorkstream;
+  selected?: Workstream | ScoredWorkstream;
+  workstreams: ScoredWorkstream[];
+  protocolPlanner: ReturnType<typeof buildProtocolPlanner>;
+  coachPlan: CoachPlan;
+  collaboratorPrepPack: CollaboratorPrepPack;
+  collaborationDebtQueue: CollaborationDebtQueue;
+  commitmentPulse: CommitmentPulse;
+  decisionSprint: ReturnType<typeof buildDecisionSprint>;
+  collaborationRetro: CollaborationRetro;
+  handoffBrief: string;
+  agenda: ReturnType<typeof buildAgenda>;
+}): FocusModePlaybook {
+  const activeWorkstream = selected ?? focusNow;
+  const focusLabel = activeWorkstream?.name ?? "the current top workstream";
+  const debtLabel = collaborationDebtQueue.items[0]?.title ?? "the murkiest handoff on the board";
+  const commitmentLabel = commitmentPulse.items[0]?.title ?? "the most time-sensitive promise";
+  const decisionLabel = decisionSprint.items[0]?.topic ?? agenda.resolveToday[0] ?? "the next call that needs real clarity";
+  const retroLabel = collaborationRetro.items[0]?.title ?? "the recurring coordination wobble";
+
+  if (mode === "daily-sync") {
+    return {
+      mode,
+      headline: `Walk into a sync already knowing what to decide, what to unblock, and what not to waste time on.`,
+      reason: `The board says ${protocolPlanner.syncMinutes} minutes actually deserve live conversation, with ${commitmentPulse.dueNowCount} urgent commitments and ${decisionSprint.items.length} decision calls pulling attention.`,
+      primaryOutcome: `Leave the conversation with one call made on ${decisionLabel} and one owner confirmed for ${commitmentLabel}.`,
+      panelOrder: ["Protocol planner", "Smart agenda", "Commitment pulse", "Decision sprint"],
+      quickWins: [
+        `Open on ${focusLabel} so the sync starts on the highest-pressure work instead of status theater.`,
+        `Use the agenda and decision sprint together so David only sees the decisions that genuinely need him.`,
+        `End by assigning the next move on ${commitmentLabel} before it quietly rolls into tomorrow.`,
+      ],
+      watchouts: [
+        `Do not let blocker chatter sprawl into every workstream on the board.`,
+        `If ${protocolPlanner.syncMinutes <= 15 ? "very little" : "limited"} sync time is justified, force anything else async.`,
+      ],
+      copyActions: [
+        { label: "Protocol plan", text: protocolPlanner.copyBlock },
+        { label: "Alignment agenda", text: handoffBrief },
+        { label: "Decision sprint memo", text: decisionSprint.copyBlock },
+      ],
+    };
+  }
+
+  if (mode === "async-cleanup") {
+    return {
+      mode,
+      headline: `Buy back leverage without booking another meeting.`,
+      reason: `There are ${protocolPlanner.asyncCount} items cheaper to handle async, while ${collaborationDebtQueue.items.length} pieces of collaboration debt are creating avoidable drag.`,
+      primaryOutcome: `Clean up ${debtLabel} and send one sharp async note that reduces coordination load today.`,
+      panelOrder: ["Collaboration debt queue", "Collaboration coach", "Output studio", "Inbox distiller"],
+      quickWins: [
+        `Start with the top debt item and fix one vague handoff instead of admiring the full backlog.`,
+        `Use the async-handoff coach mode to generate a message David can actually forward or react to.`,
+        `Distill any messy notes before they become another unclear update.`,
+      ],
+      watchouts: [
+        `Do not hide real decisions inside a long async paragraph if ${decisionSprint.items.length} calls still need explicit resolution.`,
+        `If a blocker keeps bouncing back into the debt queue, it probably deserves a real owner or a live call.`,
+      ],
+      copyActions: [
+        { label: "Debt queue", text: collaborationDebtQueue.copyBlock },
+        { label: "David async note", text: coachPlan.davidMessage },
+        { label: "Async update", text: handoffBrief },
+      ],
+    };
+  }
+
+  if (mode === "one-on-one") {
+    return {
+      mode,
+      headline: `Turn relationship pressure into a calm, specific 1:1 instead of vague emotional bookkeeping.`,
+      reason: `The collaborator map and prep pack already know where load, waits, and blockers are clustering, so this mode narrows the conversation to what changes trust and execution.`,
+      primaryOutcome: `Leave the 1:1 with one explicit ask, one follow-through list, and zero ambiguity around ${focusLabel}.`,
+      panelOrder: ["Collaborator map", "1:1 prep pack", "Commitment pulse", "Recent updates"],
+      quickWins: [
+        `Open with ${collaboratorPrepPack.openWith}`,
+        `Use the prep pack ask instead of improvising a softer, blurrier version live.`,
+        `Pull one recent update into the conversation so the discussion stays grounded in real work.`,
+      ],
+      watchouts: [
+        `Do not let the 1:1 drift into generic morale talk if commitments are already slipping.`,
+        `If the prep pack temperature is ${collaboratorPrepPack.temperature}, keep the conversation specific and short on fluff.`,
+      ],
+      copyActions: [
+        { label: "1:1 prep pack", text: collaboratorPrepPack.copyBlock },
+        { label: "Commitment pulse", text: commitmentPulse.copyBlock },
+        { label: "Recent async brief", text: handoffBrief },
+      ],
+    };
+  }
+
+  if (mode === "strategy-review") {
+    return {
+      mode,
+      headline: `Step above the week and look for system failures, decision drift, and overlap before they compound.`,
+      reason: `The board is showing ${collaborationRetro.items.length} recurring system patterns, ${decisionSprint.items.length} decision-sprint items, and ${workstreams.length} active workstreams competing for attention.`,
+      primaryOutcome: `Choose one system fix for ${retroLabel}, one decision path for ${decisionLabel}, and one priority cut if the board is overcommitted.`,
+      panelOrder: ["Collaboration retro", "Decision sprint", "Overlap radar", "What-if simulator"],
+      quickWins: [
+        `Use the retro to separate recurring system failure from one-off execution noise.`,
+        `Pressure-test interventions before spending another week on the wrong coordination ritual.`,
+        `If overlap is real, consolidate work before adding new promises.`,
+      ],
+      watchouts: [
+        `Do not treat every weak signal like a strategic issue; look for repetition.`,
+        `If decision confidence stays low after review, the real gap is probably evidence, not more discussion.`,
+      ],
+      copyActions: [
+        { label: "Retro plan", text: collaborationRetro.copyBlock },
+        { label: "Decision sprint", text: decisionSprint.copyBlock },
+        { label: "Weekly review", text: handoffBrief },
+      ],
+    };
+  }
+
+  return {
+    mode,
+    headline: `Use the full cockpit when you need the whole operating picture, not just the shortest path through it.`,
+    reason: `Nothing is hidden here: this is the broad scan for when David and Albert need full-board awareness across priorities, people, debt, and decisions.`,
+    primaryOutcome: `Get a truthful picture of the whole collaboration system, then choose a tighter mode once the mess is obvious.`,
+    panelOrder: ["Friction radar", "Priority stack", "Commitment pulse", "Collaboration debt queue", "Decision sprint"],
+    quickWins: [
+      `Start broad, then drop back into a narrower mode as soon as the bottleneck is obvious.`,
+      `If the board feels noisy, focus on ${focusLabel}, ${commitmentLabel}, and ${debtLabel} first.`,
+      `Use the full cockpit for diagnosis, not for endless browsing.`,
+    ],
+    watchouts: [
+      `The full view can become sightseeing if you do not pick a concrete next action.`,
+      `If the answer is already obvious, switch modes and move.`,
+    ],
+    copyActions: [
+      { label: "Alignment agenda", text: handoffBrief },
+      { label: "Albert plan", text: coachPlan.albertPlan },
+      { label: "Debt queue", text: collaborationDebtQueue.copyBlock },
+    ],
+  };
 }
 
 function buildCollaboratorPrepPack({
