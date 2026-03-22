@@ -85,6 +85,26 @@ type OverlapRadar = {
   copyBlock: string;
 };
 
+type SnapshotWorkstream = Pick<
+  Workstream,
+  | "id"
+  | "name"
+  | "owner"
+  | "status"
+  | "energy"
+  | "impact"
+  | "urgency"
+  | "confidence"
+  | "lastTouched"
+  | "nextStep"
+  | "blocker"
+  | "waitingOn"
+  | "desiredOutcome"
+  | "decisionNeeded"
+>;
+
+type SnapshotDecision = Pick<Decision, "id" | "topic" | "recommendation" | "confidence" | "deadline" | "impactArea">;
+
 type Snapshot = {
   id: string;
   createdAt: string;
@@ -93,6 +113,26 @@ type Snapshot = {
   blockedCount: number;
   staleCount: number;
   topFocus: string;
+  workstreams?: SnapshotWorkstream[];
+  decisions?: SnapshotDecision[];
+};
+
+type CheckpointCompare = {
+  snapshotLabel: string;
+  currentLabel: string;
+  healthDelta: number;
+  blockedDelta: number;
+  staleDelta: number;
+  addedWorkstreams: string[];
+  clearedBlockers: string[];
+  newBlockers: string[];
+  risingPriorities: string[];
+  slippingPriorities: string[];
+  newDecisions: string[];
+  urgentCalls: string[];
+  headline: string;
+  recommendation: string;
+  brief: string;
 };
 
 type Budget = {
@@ -637,6 +677,17 @@ export function CollaborationCockpit() {
   );
   const latestSnapshot = state.snapshots[0];
   const healthDelta = latestSnapshot ? collaborationHealth - latestSnapshot.health : 0;
+  const checkpointCompare = useMemo(
+    () => buildCheckpointCompare({
+      snapshot: latestSnapshot,
+      currentWorkstreams: scoredWorkstreams,
+      currentDecisions: state.decisions,
+      currentHealth: collaborationHealth,
+      blockedCount,
+      staleCount,
+    }),
+    [latestSnapshot, scoredWorkstreams, state.decisions, collaborationHealth, blockedCount, staleCount]
+  );
 
   useEffect(() => {
     if (!collaboratorMap.briefs.length) return;
@@ -772,6 +823,30 @@ export function CollaborationCockpit() {
       blockedCount,
       staleCount,
       topFocus: focusNow?.name ?? "No focus",
+      workstreams: state.workstreams.map((item) => ({
+        id: item.id,
+        name: item.name,
+        owner: item.owner,
+        status: item.status,
+        energy: item.energy,
+        impact: item.impact,
+        urgency: item.urgency,
+        confidence: item.confidence,
+        lastTouched: item.lastTouched,
+        nextStep: item.nextStep,
+        blocker: item.blocker,
+        waitingOn: item.waitingOn,
+        desiredOutcome: item.desiredOutcome,
+        decisionNeeded: item.decisionNeeded,
+      })),
+      decisions: state.decisions.map((item) => ({
+        id: item.id,
+        topic: item.topic,
+        recommendation: item.recommendation,
+        confidence: item.confidence,
+        deadline: item.deadline,
+        impactArea: item.impactArea,
+      })),
     };
 
     setState((current) => ({
@@ -1540,6 +1615,40 @@ export function CollaborationCockpit() {
               </div>
             </Panel>
 
+            <Panel title="Checkpoint compare" subtitle="Shows what actually changed since the last checkpoint, so progress is something you can inspect instead of a mood.">
+              <div className="grid gap-4">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <MetricCard label="Health delta" value={`${checkpointCompare.healthDelta > 0 ? "+" : ""}${checkpointCompare.healthDelta}`} note={checkpointCompare.snapshotLabel} />
+                  <MetricCard label="Blocked delta" value={`${checkpointCompare.blockedDelta > 0 ? "+" : ""}${checkpointCompare.blockedDelta}`} note={`${latestSnapshot ? `${latestSnapshot.blockedCount} → ${blockedCount}` : "Need a saved snapshot first"}`} />
+                  <MetricCard label="Stale delta" value={`${checkpointCompare.staleDelta > 0 ? "+" : ""}${checkpointCompare.staleDelta}`} note={`${latestSnapshot ? `${latestSnapshot.staleCount} → ${staleCount}` : "Need a saved snapshot first"}`} />
+                  <MetricCard label="Urgent calls" value={String(checkpointCompare.urgentCalls.length)} note={checkpointCompare.headline} />
+                </div>
+
+                <div className={`rounded-2xl border p-4 ${checkpointCompare.healthDelta >= 0 ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-rose-200 bg-rose-50 text-rose-900"}`}>
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">Compare {checkpointCompare.snapshotLabel} → {checkpointCompare.currentLabel}</p>
+                      <p className="mt-2 text-sm leading-6 opacity-90">{checkpointCompare.recommendation}</p>
+                    </div>
+                    <button type="button" onClick={() => copyText(checkpointCompare.brief, "checkpoint compare")} className="rounded-xl border border-white/80 bg-white/80 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-white">
+                      Copy compare brief
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <CompareListCard title="New blockers" items={checkpointCompare.newBlockers} empty="No new blockers since the last checkpoint." />
+                  <CompareListCard title="Cleared blockers" items={checkpointCompare.clearedBlockers} empty="No blockers were fully cleared yet." />
+                  <CompareListCard title="Rising priorities" items={checkpointCompare.risingPriorities} empty="No priority risers detected." />
+                  <CompareListCard title="Slipping priorities" items={checkpointCompare.slippingPriorities} empty="Nothing important is obviously slipping." />
+                </div>
+
+                <Field label="Copy-ready delta brief">
+                  <textarea readOnly className={`${inputClass} min-h-64 font-mono text-sm`} value={checkpointCompare.brief} />
+                </Field>
+              </div>
+            </Panel>
+
             <Panel title="Collaboration retro" subtitle="Finds the recurring pattern that keeps making collaboration more expensive, then suggests a fix worth testing instead of just admiring the mess.">
               <div className="grid gap-4">
                 <div className="grid gap-3 md:grid-cols-4">
@@ -2114,6 +2223,20 @@ function BudgetColumn({ title, items, empty }: { title: string; items: BudgetAll
   );
 }
 
+function CompareListCard({ title, items, empty }: { title: string; items: string[]; empty: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+        <Badge>{items.length}</Badge>
+      </div>
+      <ul className="mt-3 space-y-2 text-sm text-slate-700">
+        {items.length ? items.map((item) => <li key={`${title}-${item}`}>• {item}</li>) : <li className="text-slate-500">{empty}</li>}
+      </ul>
+    </div>
+  );
+}
+
 function TrendChart({ snapshots, currentHealth }: { snapshots: Snapshot[]; currentHealth: number }) {
   const points = [...snapshots].slice(0, 6).reverse();
   const values = [...points.map((item) => item.health), currentHealth];
@@ -2391,6 +2514,161 @@ function buildCollaboratorMap(workstreams: ScoredWorkstream[], decisions: Decisi
     copyBlock,
     overloadedCount,
     bottleneckCount,
+  };
+}
+
+function buildCheckpointCompare({
+  snapshot,
+  currentWorkstreams,
+  currentDecisions,
+  currentHealth,
+  blockedCount,
+  staleCount,
+}: {
+  snapshot?: Snapshot;
+  currentWorkstreams: ScoredWorkstream[];
+  currentDecisions: Decision[];
+  currentHealth: number;
+  blockedCount: number;
+  staleCount: number;
+}): CheckpointCompare {
+  if (!snapshot?.workstreams?.length) {
+    const brief = [
+      "CHECKPOINT COMPARE",
+      "",
+      "No saved board snapshot yet.",
+      "Save a checkpoint and this panel will compare blockers, drift, and rising priorities against the actual previous board.",
+    ].join("\n");
+
+    return {
+      snapshotLabel: "No baseline yet",
+      currentLabel: "Now",
+      healthDelta: 0,
+      blockedDelta: 0,
+      staleDelta: 0,
+      addedWorkstreams: [],
+      clearedBlockers: [],
+      newBlockers: [],
+      risingPriorities: [],
+      slippingPriorities: [],
+      newDecisions: [],
+      urgentCalls: [],
+      headline: "Save a checkpoint to unlock real before/after signal.",
+      recommendation: "Right now this panel has no baseline, so it would just be pretending. Save one snapshot after a real review.",
+      brief,
+    };
+  }
+
+  const previousScored = scoreWorkstreams(snapshot.workstreams.map(normalizeWorkstream));
+  const previousMap = new Map(previousScored.map((item, index) => [item.name, { item, index }]));
+  const currentMap = new Map(currentWorkstreams.map((item, index) => [item.name, { item, index }]));
+
+  const addedWorkstreams = currentWorkstreams
+    .filter((item) => !previousMap.has(item.name))
+    .map((item) => item.name)
+    .slice(0, 4);
+
+  const newBlockers = currentWorkstreams
+    .filter((item) => {
+      const prior = previousMap.get(item.name)?.item;
+      return item.status === "blocked" && (!prior || prior.status !== "blocked");
+    })
+    .map((item) => `${item.name} — ${item.blocker || "blocked with no clear reason logged yet"}`)
+    .slice(0, 4);
+
+  const clearedBlockers = previousScored
+    .filter((item) => item.status === "blocked")
+    .filter((item) => {
+      const current = currentMap.get(item.name)?.item;
+      return current && current.status !== "blocked";
+    })
+    .map((item) => item.name)
+    .slice(0, 4);
+
+  const risingPriorities = currentWorkstreams
+    .map((item, index) => {
+      const prior = previousMap.get(item.name);
+      if (!prior) return null;
+      const rankLift = prior.index - index;
+      const scoreDelta = item.score - prior.item.score;
+      if (rankLift < 2 && scoreDelta < 8) return null;
+      return `${item.name} — up ${rankLift > 0 ? `${rankLift} slot${rankLift === 1 ? "" : "s"}` : "in score"} · ${scoreDelta > 0 ? `+${scoreDelta} score` : `${scoreDelta} score`}`;
+    })
+    .filter(Boolean) as string[];
+
+  const slippingPriorities = previousScored
+    .map((item) => {
+      const current = currentMap.get(item.name);
+      if (!current) return `${item.name} — dropped out of the current active stack.`;
+      const rankDrop = current.index - (previousMap.get(item.name)?.index ?? 0);
+      const scoreDelta = current.item.score - item.score;
+      if (rankDrop < 2 && scoreDelta > -8) return null;
+      return `${item.name} — down ${rankDrop > 0 ? `${rankDrop} slot${rankDrop === 1 ? "" : "s"}` : "in score"} · ${scoreDelta > 0 ? `+${scoreDelta} score` : `${scoreDelta} score`}`;
+    })
+    .filter(Boolean) as string[];
+
+  const previousDecisions = new Set((snapshot.decisions ?? []).map((item) => item.topic));
+  const newDecisions = currentDecisions
+    .filter((item) => !previousDecisions.has(item.topic))
+    .map((item) => `${item.topic} by ${prettyDate(item.deadline)}`)
+    .slice(0, 4);
+
+  const urgentCalls = [
+    ...newBlockers.slice(0, 2),
+    ...currentDecisions.filter((item) => isPast(item.deadline)).map((item) => `Overdue decision — ${item.topic}`).slice(0, 2),
+    ...slippingPriorities.filter((item) => item.toLowerCase().includes("down") || item.toLowerCase().includes("dropped")).slice(0, 2),
+  ].slice(0, 4);
+
+  const healthDelta = currentHealth - snapshot.health;
+  const blockedDelta = blockedCount - snapshot.blockedCount;
+  const staleDelta = staleCount - snapshot.staleCount;
+  const headline = healthDelta >= 0
+    ? `Compared with ${snapshot.note}, collaboration health is ${healthDelta ? `${healthDelta > 0 ? "up" : "flat"} ${Math.abs(healthDelta)}` : "flat"} and the board looks ${blockedDelta <= 0 ? "cleaner" : "heavier"}.`
+    : `Compared with ${snapshot.note}, the board is carrying more drag and needs cleanup before it pretends to be progress.`;
+  const recommendation = newBlockers.length
+    ? `Start by clearing ${newBlockers[0].split(" — ")[0]}. The board picked up new drag since the last checkpoint, so chasing polish first would be theater.`
+    : slippingPriorities.length
+      ? `Refresh ${slippingPriorities[0].split(" — ")[0]} before it quietly turns into fake momentum loss.`
+      : clearedBlockers.length
+        ? `Good news: blocker cleanup is working. Keep that rhythm and make sure the next compare also reduces stale work.`
+        : `Nothing dramatic changed, which usually means the next improvement should be sharper priorities or cleaner updates rather than more process.`;
+
+  const brief = [
+    "CHECKPOINT COMPARE",
+    "",
+    `Baseline: ${snapshot.note} (${prettyDateTime(snapshot.createdAt)})`,
+    `Current: Now`,
+    `Health delta: ${healthDelta > 0 ? "+" : ""}${healthDelta}`,
+    `Blocked delta: ${blockedDelta > 0 ? "+" : ""}${blockedDelta}`,
+    `Stale delta: ${staleDelta > 0 ? "+" : ""}${staleDelta}`,
+    "",
+    `Headline: ${headline}`,
+    `Recommendation: ${recommendation}`,
+    "",
+    `New blockers: ${newBlockers.length ? newBlockers.join(" | ") : "None"}`,
+    `Cleared blockers: ${clearedBlockers.length ? clearedBlockers.join(" | ") : "None"}`,
+    `Rising priorities: ${risingPriorities.length ? risingPriorities.join(" | ") : "None"}`,
+    `Slipping priorities: ${slippingPriorities.length ? slippingPriorities.join(" | ") : "None"}`,
+    `New decisions: ${newDecisions.length ? newDecisions.join(" | ") : "None"}`,
+    `Urgent calls: ${urgentCalls.length ? urgentCalls.join(" | ") : "None"}`,
+  ].join("\n");
+
+  return {
+    snapshotLabel: snapshot.note,
+    currentLabel: "Now",
+    healthDelta,
+    blockedDelta,
+    staleDelta,
+    addedWorkstreams,
+    clearedBlockers,
+    newBlockers,
+    risingPriorities: risingPriorities.slice(0, 4),
+    slippingPriorities: slippingPriorities.slice(0, 4),
+    newDecisions,
+    urgentCalls,
+    headline,
+    recommendation,
+    brief,
   };
 }
 
