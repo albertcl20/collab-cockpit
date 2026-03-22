@@ -86,6 +86,32 @@ type OverlapRadar = {
   copyBlock: string;
 };
 
+type MergeSuggestion = {
+  primaryId: string;
+  secondaryId: string;
+  confidence: number;
+  headline: string;
+  keep: string[];
+  risks: string[];
+  merged: {
+    name: string;
+    owner: string;
+    status: Status;
+    energy: Energy;
+    impact: number;
+    urgency: number;
+    confidence: number;
+    nextStep: string;
+    blocker: string;
+    waitingOn: string;
+    desiredOutcome: string;
+    decisionNeeded: string;
+    notes: string;
+  };
+  updateDetail: string;
+  copyBlock: string;
+};
+
 type SnapshotWorkstream = Pick<
   Workstream,
   | "id"
@@ -637,6 +663,7 @@ export function CollaborationCockpit() {
   const [coachMode, setCoachMode] = useState<CoachMode>("quick-sync");
   const [focusMode, setFocusMode] = useState<FocusMode>("daily-sync");
   const [selectedCollaborator, setSelectedCollaborator] = useState("David");
+  const [mergeSelection, setMergeSelection] = useState<{ primaryId: string; secondaryId: string }>({ primaryId: "", secondaryId: "" });
   const [snapshotNote, setSnapshotNote] = useState("");
   const [copyState, setCopyState] = useState<string>("");
   const [budget, setBudget] = useState<Budget>({ deepHours: 6, lightHours: 4, syncMinutes: 45 });
@@ -715,6 +742,15 @@ export function CollaborationCockpit() {
   );
   const decisionSprint = useMemo(() => buildDecisionSprint(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
   const overlapRadar = useMemo(() => buildOverlapRadar(scoredWorkstreams), [scoredWorkstreams]);
+  const mergeSuggestion = useMemo(
+    () =>
+      buildMergeSuggestion({
+        workstreams: scoredWorkstreams,
+        selection: mergeSelection,
+        overlapRadar,
+      }),
+    [mergeSelection, overlapRadar, scoredWorkstreams]
+  );
   const budgetPlan = useMemo(() => buildBudgetPlan(scoredWorkstreams, budget), [scoredWorkstreams, budget]);
   const ritualCadence = useMemo(
     () => buildRitualCadence({ workstreams: scoredWorkstreams, decisions: state.decisions, budget, blockedCount, staleCount }),
@@ -811,6 +847,19 @@ export function CollaborationCockpit() {
       agenda,
     ]
   );
+
+  useEffect(() => {
+    if (mergeSuggestion) {
+      if (mergeSelection.primaryId === mergeSuggestion.primaryId && mergeSelection.secondaryId === mergeSuggestion.secondaryId) return;
+      setMergeSelection({ primaryId: mergeSuggestion.primaryId, secondaryId: mergeSuggestion.secondaryId });
+      return;
+    }
+
+    const primaryId = scoredWorkstreams[0]?.id ?? "";
+    const secondaryId = scoredWorkstreams.find((item) => item.id !== primaryId)?.id ?? "";
+    if (mergeSelection.primaryId === primaryId && mergeSelection.secondaryId === secondaryId) return;
+    setMergeSelection({ primaryId, secondaryId });
+  }, [mergeSelection.primaryId, mergeSelection.secondaryId, mergeSuggestion, scoredWorkstreams]);
 
   useEffect(() => {
     if (!collaboratorMap.briefs.length) return;
@@ -935,6 +984,45 @@ export function CollaborationCockpit() {
       ],
     }));
     setSelectedId(created.id);
+  }
+
+  function applyMergeSuggestion() {
+    if (!mergeSuggestion) return;
+
+    setState((current) => {
+      const secondary = current.workstreams.find((item) => item.id === mergeSuggestion.secondaryId);
+      const workstreams = current.workstreams
+        .filter((item) => item.id !== mergeSuggestion.secondaryId)
+        .map((item) =>
+          item.id === mergeSuggestion.primaryId
+            ? {
+                ...item,
+                ...mergeSuggestion.merged,
+                lastTouched: todayIso(),
+              }
+            : item
+        );
+
+      const updates = [
+        {
+          id: cryptoId(),
+          title: `Merged duplicate workstreams · ${mergeSuggestion.merged.name}`,
+          detail: mergeSuggestion.updateDetail,
+          createdAt: todayIso(),
+          relatedWorkstream: mergeSuggestion.merged.name,
+          type: "from-albert" as UpdateType,
+        },
+        ...current.updates.filter((item) => item.relatedWorkstream !== secondary?.name),
+      ];
+
+      return {
+        ...current,
+        workstreams,
+        updates,
+      };
+    });
+
+    setSelectedId(mergeSuggestion.primaryId);
   }
 
   function saveSnapshot() {
@@ -2169,6 +2257,93 @@ export function CollaborationCockpit() {
                     </div>
                   ))}
                 </div>
+              </div>
+            </Panel>
+
+            <Panel title="Merge studio" subtitle="Takes overlapping threads and rewrites them into one cleaner workstream, one update, and one owner instead of duplicate motion.">
+              <div className="grid gap-4">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <MetricCard label="Auto-picked pair" value={mergeSuggestion ? "ready" : "none"} note={mergeSuggestion?.headline ?? "Need at least two workstreams to compare."} />
+                  <MetricCard label="Merge confidence" value={mergeSuggestion ? `${mergeSuggestion.confidence}%` : "—"} note={mergeSuggestion?.keep[0] ?? "No overlap signal strong enough yet."} />
+                  <MetricCard label="Keep signals" value={String(mergeSuggestion?.keep.length ?? 0)} note={mergeSuggestion?.keep[1] ?? "Nothing named."} />
+                  <MetricCard label="Risks" value={String(mergeSuggestion?.risks.length ?? 0)} note={mergeSuggestion?.risks[0] ?? "No obvious merge risk detected."} />
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="Primary workstream to keep">
+                    <select
+                      className={inputClass}
+                      value={mergeSelection.primaryId}
+                      onChange={(e) => setMergeSelection((current) => ({ ...current, primaryId: e.target.value }))}
+                    >
+                      {scoredWorkstreams.map((item) => (
+                        <option key={`merge-primary-${item.id}`} value={item.id}>{item.name}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Secondary workstream to fold in">
+                    <select
+                      className={inputClass}
+                      value={mergeSelection.secondaryId}
+                      onChange={(e) => setMergeSelection((current) => ({ ...current, secondaryId: e.target.value }))}
+                    >
+                      {scoredWorkstreams.filter((item) => item.id !== mergeSelection.primaryId).map((item) => (
+                        <option key={`merge-secondary-${item.id}`} value={item.id}>{item.name}</option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+
+                {mergeSuggestion ? (
+                  <>
+                    <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-blue-900">Suggested merged thread</p>
+                          <p className="mt-2 text-sm leading-6 text-blue-900/90">{mergeSuggestion.headline}</p>
+                        </div>
+                        <button type="button" onClick={() => copyText(mergeSuggestion.copyBlock, "merge plan")} className="rounded-xl border border-white/80 bg-white/80 px-4 py-2 text-sm font-medium text-blue-900 transition hover:bg-white">
+                          Copy merge plan
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-sm font-semibold text-slate-900">What survives the merge</p>
+                        <ul className="mt-3 space-y-2 text-sm text-slate-700">
+                          {mergeSuggestion.keep.map((item) => <li key={item}>• {item}</li>)}
+                        </ul>
+                      </div>
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                        <p className="text-sm font-semibold text-amber-900">What to watch</p>
+                        <ul className="mt-3 space-y-2 text-sm text-amber-900/90">
+                          {mergeSuggestion.risks.map((item) => <li key={item}>• {item}</li>)}
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <Field label="Merged workstream draft">
+                        <textarea readOnly className={`${inputClass} min-h-80 font-mono text-sm`} value={JSON.stringify(mergeSuggestion.merged, null, 2)} />
+                      </Field>
+                      <Field label="Copy-ready update after merge">
+                        <textarea readOnly className={`${inputClass} min-h-80 font-mono text-sm`} value={mergeSuggestion.updateDetail} />
+                      </Field>
+                    </div>
+
+                    <div className="flex flex-wrap gap-3">
+                      <button type="button" onClick={applyMergeSuggestion} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                        Apply merge to board
+                      </button>
+                      <button type="button" onClick={() => copyText(mergeSuggestion.updateDetail, "merge update")} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                        Copy merge update
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">No merge suggestion yet. Add a couple of real workstreams and overlap radar will stop being theoretical.</p>
+                )}
               </div>
             </Panel>
 
@@ -3607,6 +3782,133 @@ function buildDecisionSprint(workstreams: ScoredWorkstream[], decisions: Decisio
     highPressureCount: ranked.filter((item) => item.urgency === "high").length,
     copyBlock,
   };
+}
+
+function buildMergeSuggestion({
+  workstreams,
+  selection,
+  overlapRadar,
+}: {
+  workstreams: ScoredWorkstream[];
+  selection: { primaryId: string; secondaryId: string };
+  overlapRadar: OverlapRadar;
+}): MergeSuggestion | null {
+  if (workstreams.length < 2) return null;
+
+  let primary = workstreams.find((item) => item.id === selection.primaryId);
+  let secondary = workstreams.find((item) => item.id === selection.secondaryId);
+
+  if ((!primary || !secondary || primary.id === secondary.id) && overlapRadar.items[0]) {
+    primary = workstreams.find((item) => item.name === overlapRadar.items[0].leftName) ?? workstreams[0];
+    secondary = workstreams.find((item) => item.name === overlapRadar.items[0].rightName && item.id !== primary?.id) ?? workstreams.find((item) => item.id !== primary?.id);
+  }
+
+  if (!primary) primary = workstreams[0];
+  if (!secondary) secondary = workstreams.find((item) => item.id !== primary.id);
+  if (!primary || !secondary || primary.id === secondary.id) return null;
+
+  const sharedOwners = [primary.owner, secondary.owner].map((item) => normalizePersonLabel(item)).filter(Boolean);
+  const sharedWaiting = Array.from(new Set([...splitPeople(primary.waitingOn), ...splitPeople(secondary.waitingOn)]));
+  const keep = [
+    `Primary thread: ${primary.name}`,
+    `Fold in useful detail from ${secondary.name}`,
+    sharedWaiting.length ? `Keep one dependency line: ${sharedWaiting.join(", ")}` : `No outside dependency needs to survive as a separate thread.`,
+    primary.decisionNeeded || secondary.decisionNeeded ? `Preserve the decision ask: ${primary.decisionNeeded || secondary.decisionNeeded}` : `This merge is mostly about execution clarity, not a new decision.`,
+  ];
+
+  const risks = [
+    primary.status !== secondary.status ? `Status differs (${primary.status} vs ${secondary.status}). After merging, keep the harsher truth unless it is clearly stale.` : `Status is aligned enough to merge cleanly.`,
+    primary.owner !== secondary.owner ? `Ownership differs (${primary.owner} vs ${secondary.owner}). Pick one real owner or keep it explicitly shared.` : `Owner is already consistent.`,
+    secondary.blocker && !primary.blocker ? `Do not lose blocker context from ${secondary.name}.` : `Main blocker context already lives in the primary thread.`,
+  ];
+
+  const mergedName = primary.name.length >= secondary.name.length ? primary.name : secondary.name;
+  const mergedStatus: Status = [primary.status, secondary.status].includes("blocked")
+    ? "blocked"
+    : [primary.status, secondary.status].includes("active")
+      ? "active"
+      : [primary.status, secondary.status].includes("watch")
+        ? "watch"
+        : "done";
+  const mergedEnergy: Energy = [primary.energy, secondary.energy].includes("stuck")
+    ? "stuck"
+    : [primary.energy, secondary.energy].includes("deep")
+      ? "deep"
+      : "light";
+  const mergedOwner = primary.owner === secondary.owner ? primary.owner : sharedOwners.length === 1 ? sharedOwners[0] : "Shared";
+  const mergedNotes = [primary.notes, secondary.notes].filter(Boolean).join("\n\n--- merged note ---\n\n");
+  const mergedNextStep = longestLine(primary.nextStep, secondary.nextStep);
+  const mergedBlocker = longestLine(primary.blocker, secondary.blocker);
+  const mergedDesiredOutcome = longestLine(primary.desiredOutcome, secondary.desiredOutcome);
+  const mergedDecision = longestLine(primary.decisionNeeded, secondary.decisionNeeded);
+  const mergedWaitingOn = sharedWaiting.join(", ");
+  const mergedConfidence = Math.round((primary.confidence + secondary.confidence) / 2);
+  const mergedImpact = Math.max(primary.impact, secondary.impact);
+  const mergedUrgency = Math.max(primary.urgency, secondary.urgency);
+  const confidence = clamp(
+    58
+      + (overlapRadar.items.find((item) => item.leftName === primary.name && item.rightName === secondary.name || item.leftName === secondary.name && item.rightName === primary.name)?.score ?? 0) / 2
+      + (primary.owner === secondary.owner ? 8 : 0),
+    55,
+    96
+  );
+
+  const merged = {
+    name: mergedName,
+    owner: mergedOwner,
+    status: mergedStatus,
+    energy: mergedEnergy,
+    impact: mergedImpact,
+    urgency: mergedUrgency,
+    confidence: mergedConfidence,
+    nextStep: mergedNextStep,
+    blocker: mergedBlocker,
+    waitingOn: mergedWaitingOn,
+    desiredOutcome: mergedDesiredOutcome,
+    decisionNeeded: mergedDecision,
+    notes: mergedNotes,
+  };
+
+  const headline = `${primary.name} and ${secondary.name} look close enough to run as one thread. Keep the sharper framing, keep the hardest blocker, and delete the duplicate surface area.`;
+  const updateDetail = [
+    `Merged ${secondary.name} into ${merged.name}.`,
+    `Why it matters: the board had overlapping threads describing adjacent work, so the same thinking was starting to happen twice.`,
+    `Current blocker: ${merged.blocker || "No hard blocker after merge."}`,
+    `Exact next move: ${merged.nextStep}`,
+  ].join(" ");
+  const copyBlock = [
+    "MERGE STUDIO",
+    "",
+    `Confidence: ${confidence}%`,
+    `Headline: ${headline}`,
+    `Primary keep: ${primary.name}`,
+    `Secondary fold-in: ${secondary.name}`,
+    `Owner after merge: ${merged.owner}`,
+    `Status / energy: ${merged.status} / ${merged.energy}`,
+    `Next step: ${merged.nextStep}`,
+    `Blocker: ${merged.blocker || "None"}`,
+    `Desired outcome: ${merged.desiredOutcome || "Not set"}`,
+    `Decision needed: ${merged.decisionNeeded || "None"}`,
+  ].join("\n");
+
+  return {
+    primaryId: primary.id,
+    secondaryId: secondary.id,
+    confidence,
+    headline,
+    keep,
+    risks,
+    merged,
+    updateDetail,
+    copyBlock,
+  };
+}
+
+function longestLine(...values: string[]) {
+  return values
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)[0] ?? "";
 }
 
 function buildOverlapRadar(workstreams: ScoredWorkstream[]): OverlapRadar {
