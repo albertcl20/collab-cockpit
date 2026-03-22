@@ -143,6 +143,21 @@ type RitualCadencePlan = {
   operatingSystem: string;
 };
 
+type CalendarExportItem = {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  category: "commitment" | "decision" | "ritual";
+  detail: string;
+};
+
+type CalendarExportPlan = {
+  items: CalendarExportItem[];
+  headline: string;
+  ics: string;
+};
+
 type InterventionSimulation = {
   id: string;
   title: string;
@@ -583,6 +598,10 @@ export function CollaborationCockpit() {
     () => buildRitualCadence({ workstreams: scoredWorkstreams, decisions: state.decisions, budget, blockedCount, staleCount }),
     [scoredWorkstreams, state.decisions, budget, blockedCount, staleCount]
   );
+  const calendarPlan = useMemo(
+    () => buildCalendarExportPlan({ workstreams: scoredWorkstreams, decisions: state.decisions, cadence: ritualCadence }),
+    [scoredWorkstreams, state.decisions, ritualCadence]
+  );
   const interventionSimulations = useMemo(
     () => buildInterventionSimulations({ workstreams: state.workstreams, decisions: state.decisions, budget }),
     [state.workstreams, state.decisions, budget]
@@ -774,6 +793,16 @@ export function CollaborationCockpit() {
   async function copyText(text: string, label: string) {
     await navigator.clipboard.writeText(text);
     setCopyState(label);
+  }
+
+  function downloadCalendar() {
+    const blob = new Blob([calendarPlan.ics], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `collab-cockpit-calendar-${todayIso()}.ics`;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   function exportJson() {
@@ -1219,6 +1248,47 @@ export function CollaborationCockpit() {
                         <p><span className="font-medium">Trigger:</span> {item.trigger}</p>
                         <p><span className="font-medium">Output:</span> {item.output}</p>
                       </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="Calendar export" subtitle="Turns the board into real calendar blocks and decision checkpoints, so the week stops living entirely in good intentions.">
+              <div className="grid gap-4">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <MetricCard label="Calendar blocks" value={String(calendarPlan.items.length)} note={calendarPlan.headline} />
+                  <MetricCard label="Commitments" value={String(calendarPlan.items.filter((item) => item.category === "commitment").length)} note="Execution blocks worth scheduling" />
+                  <MetricCard label="Decisions" value={String(calendarPlan.items.filter((item) => item.category === "decision").length)} note="Short review moments that should not stay fuzzy" />
+                  <MetricCard label="Rituals" value={String(calendarPlan.items.filter((item) => item.category === "ritual").length)} note="Weekly operating rhythm, translated into time" />
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">Calendar-ready plan</h3>
+                      <p className="mt-1 text-sm text-slate-600">{calendarPlan.headline}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <button type="button" onClick={downloadCalendar} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                        Download .ics
+                      </button>
+                      <button type="button" onClick={() => copyText(calendarPlan.ics, "calendar file")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                        Copy .ics
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid gap-3 xl:grid-cols-2">
+                  {calendarPlan.items.map((item) => (
+                    <div key={item.id} className={`rounded-2xl border p-4 ${item.category === "commitment" ? "border-blue-200 bg-blue-50 text-blue-900" : item.category === "decision" ? "border-rose-200 bg-rose-50 text-rose-900" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-base font-semibold">{item.title}</h3>
+                          <p className="mt-1 text-sm opacity-90">{calendarWindowLabel(item.start, item.end)}</p>
+                        </div>
+                        <Badge tone="border-white/80 bg-white/80 text-slate-700">{item.category}</Badge>
+                      </div>
+                      <p className="mt-3 text-sm leading-6 opacity-90">{item.detail}</p>
                     </div>
                   ))}
                 </div>
@@ -3857,6 +3927,140 @@ function buildCommitmentPulse(workstreams: ScoredWorkstream[], decisions: Decisi
   ].join("\n\n");
 
   return { items, dueNowCount, thisWeekCount, waitingCount, ownerLoad, headline, copyBlock };
+}
+
+function buildCalendarExportPlan({
+  workstreams,
+  decisions,
+  cadence,
+}: {
+  workstreams: ScoredWorkstream[];
+  decisions: Decision[];
+  cadence: RitualCadencePlan;
+}): CalendarExportPlan {
+  const items: CalendarExportItem[] = [];
+  const startOfWeek = nextMondayAt(9, 0);
+
+  workstreams
+    .filter((item) => item.status !== "done")
+    .slice(0, 3)
+    .forEach((item, index) => {
+      const dayOffset = index === 0 ? 0 : index === 1 ? 1 : 3;
+      const start = addMinutes(startOfWeek, dayOffset * 24 * 60 + (item.energy === "deep" ? 0 : 210));
+      const durationMinutes = item.energy === "deep" ? 90 : item.status === "blocked" ? 30 : 45;
+      items.push({
+        id: `${item.id}-calendar-commitment`,
+        title: item.status === "blocked" ? `Unblock · ${item.name}` : `Move · ${item.name}`,
+        start: start.toISOString(),
+        end: addMinutes(start, durationMinutes).toISOString(),
+        category: "commitment",
+        detail: `${item.nextStep} ${item.waitingOn.trim() ? `Dependency: ${item.waitingOn}` : ""}`.trim(),
+      });
+    });
+
+  decisions
+    .slice()
+    .sort((a, b) => a.deadline.localeCompare(b.deadline))
+    .slice(0, 2)
+    .forEach((decision, index) => {
+      const date = isoToLocalDate(decision.deadline);
+      const start = withTime(date, 13 + index, 0);
+      items.push({
+        id: `${decision.id}-calendar-decision`,
+        title: `Decision review · ${decision.topic}`,
+        start: start.toISOString(),
+        end: addMinutes(start, 25).toISOString(),
+        category: "decision",
+        detail: decision.recommendation,
+      });
+    });
+
+  cadence.items.slice(0, 3).forEach((item, index) => {
+    const start = addMinutes(startOfWeek, index * 24 * 60 + 480);
+    items.push({
+      id: `${item.id}-calendar-ritual`,
+      title: `${item.dayLabel} · ${item.title}`,
+      start: start.toISOString(),
+      end: addMinutes(start, item.durationMinutes).toISOString(),
+      category: "ritual",
+      detail: `${item.purpose} Output: ${item.output}`,
+    });
+  });
+
+  const deduped = items
+    .sort((a, b) => a.start.localeCompare(b.start))
+    .slice(0, 8);
+
+  const headline = deduped.length
+    ? `Built ${deduped.length} concrete calendar blocks from the current board. Import them, edit them, then let reality fight back.`
+    : "No useful calendar blocks yet. The board needs more real work to schedule.";
+
+  const ics = buildIcsFile(deduped);
+  return { items: deduped, headline, ics };
+}
+
+function buildIcsFile(items: CalendarExportItem[]) {
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Albert Linux//Collab Cockpit//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+  ];
+
+  for (const item of items) {
+    lines.push(
+      "BEGIN:VEVENT",
+      `UID:${item.id}@collab-cockpit`,
+      `DTSTAMP:${toIcsUtc(new Date())}`,
+      `DTSTART:${toIcsUtc(new Date(item.start))}`,
+      `DTEND:${toIcsUtc(new Date(item.end))}`,
+      `SUMMARY:${escapeIcsText(item.title)}`,
+      `DESCRIPTION:${escapeIcsText(item.detail)}`,
+      "END:VEVENT"
+    );
+  }
+
+  lines.push("END:VCALENDAR");
+  return `${lines.join("\r\n")}\r\n`;
+}
+
+function toIcsUtc(date: Date) {
+  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function escapeIcsText(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;");
+}
+
+function nextMondayAt(hour: number, minute: number) {
+  const now = new Date();
+  const monday = new Date(now);
+  const day = monday.getDay();
+  const delta = ((8 - day) % 7) || 7;
+  monday.setDate(monday.getDate() + delta);
+  monday.setHours(hour, minute, 0, 0);
+  return monday;
+}
+
+function addMinutes(date: Date, minutes: number) {
+  return new Date(date.getTime() + minutes * 60_000);
+}
+
+function isoToLocalDate(isoDate: string) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return new Date(year, (month || 1) - 1, day || 1, 0, 0, 0, 0);
+}
+
+function withTime(date: Date, hour: number, minute: number) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, minute, 0, 0);
+}
+
+function calendarWindowLabel(startIso: string, endIso: string) {
+  const formatter = new Intl.DateTimeFormat("en", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const start = new Date(startIso);
+  const end = new Date(endIso);
+  return `${formatter.format(start)} → ${new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(end)}`;
 }
 
 function inferNudgeTarget(item: ScoredWorkstream) {
