@@ -405,6 +405,23 @@ type SessionRunner = {
   recap: string;
 };
 
+type DailyCommandBrief = {
+  headline: string;
+  davidTop3: string[];
+  albertTop3: string[];
+  sharedMoves: string[];
+  doNotDo: string[];
+  ifYouOnlyDoOneThing: string;
+  whyTodayMatters: string;
+  messageToDavid: string;
+  scorecard: {
+    focus: string;
+    risk: string;
+    meetingLoad: string;
+    executionBias: string;
+  };
+};
+
 type CollaborationDebtItem = {
   id: string;
   title: string;
@@ -897,6 +914,19 @@ export function CollaborationCockpit() {
     ]
   );
 
+  const dailyCommandBrief = useMemo(
+    () =>
+      buildDailyCommandBrief({
+        workstreams: scoredWorkstreams,
+        decisions: state.decisions,
+        commitmentPulse,
+        protocolPlanner,
+        collaborationDebtQueue,
+        coachPlan,
+      }),
+    [scoredWorkstreams, state.decisions, commitmentPulse, protocolPlanner, collaborationDebtQueue, coachPlan]
+  );
+
   useEffect(() => {
     if (mergeSuggestion) {
       if (mergeSelection.primaryId === mergeSuggestion.primaryId && mergeSelection.secondaryId === mergeSuggestion.secondaryId) return;
@@ -1356,6 +1386,63 @@ export function CollaborationCockpit() {
                   <span className="mt-1 block text-sm leading-6 text-slate-600">Copy the exact artifact most useful for this moment.</span>
                 </button>
               ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl space-y-2">
+                <span className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-indigo-700">
+                  Daily command brief
+                </span>
+                <h2 className="text-2xl font-semibold tracking-tight text-slate-900">A one-screen operating brief for today.</h2>
+                <p className="text-sm leading-6 text-slate-600 sm:text-base">
+                  This compresses the cockpit into the handful of moves that matter right now: what David should touch, what Albert can run, what should stay shared, and what to explicitly avoid.
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 lg:min-w-[560px]">
+                <MetricCard label="If only one thing" value={dailyCommandBrief.scorecard.focus} note={dailyCommandBrief.ifYouOnlyDoOneThing} />
+                <MetricCard label="Main risk" value={dailyCommandBrief.scorecard.risk} note={dailyCommandBrief.whyTodayMatters} />
+                <MetricCard label="Meeting load" value={dailyCommandBrief.scorecard.meetingLoad} note={protocolPlanner.headline} />
+                <MetricCard label="Execution bias" value={dailyCommandBrief.scorecard.executionBias} note={dailyCommandBrief.doNotDo[0] ?? "No obvious anti-pattern right now"} />
+              </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+              <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 text-indigo-950">
+                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-indigo-700">If you only do one thing</p>
+                  <h3 className="mt-2 text-xl font-semibold">{dailyCommandBrief.ifYouOnlyDoOneThing}</h3>
+                  <p className="mt-3 text-sm leading-6 opacity-90">{dailyCommandBrief.whyTodayMatters}</p>
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <CommandListCard title="David should touch" items={dailyCommandBrief.davidTop3} tone="border-blue-200 bg-blue-50 text-blue-950" />
+                  <CommandListCard title="Albert should run" items={dailyCommandBrief.albertTop3} tone="border-emerald-200 bg-emerald-50 text-emerald-950" />
+                  <CommandListCard title="Shared moves" items={dailyCommandBrief.sharedMoves} tone="border-violet-200 bg-violet-50 text-violet-950" />
+                  <CommandListCard title="Do not do today" items={dailyCommandBrief.doNotDo} tone="border-amber-200 bg-amber-50 text-amber-950" />
+                </div>
+              </div>
+
+              <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-sm font-semibold text-slate-900">Headline</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">{dailyCommandBrief.headline}</p>
+                </div>
+                <Field label="Message David can read in 20 seconds">
+                  <textarea readOnly className={`${inputClass} min-h-72 font-mono text-sm`} value={dailyCommandBrief.messageToDavid} />
+                </Field>
+                <div className="flex flex-wrap gap-3">
+                  <button type="button" onClick={() => copyText(dailyCommandBrief.messageToDavid, "daily command brief")} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                    Copy daily brief
+                  </button>
+                  <button type="button" onClick={() => copyText([dailyCommandBrief.headline, "", ...dailyCommandBrief.davidTop3.map((item, index) => `${index + 1}. ${item}`), "", ...dailyCommandBrief.albertTop3.map((item, index) => `Albert ${index + 1}. ${item}`)].join("\n"), "daily command list")} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                    Copy command list
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -2989,6 +3076,20 @@ function CompareListCard({ title, items, empty }: { title: string; items: string
   );
 }
 
+function CommandListCard({ title, items, tone }: { title: string; items: string[]; tone: string }) {
+  return (
+    <div className={`rounded-2xl border p-4 ${tone}`}>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <Badge tone="border-white/80 bg-white/80 text-slate-700">{items.length}</Badge>
+      </div>
+      <ul className="mt-3 space-y-2 text-sm leading-6 opacity-95">
+        {items.length ? items.map((item) => <li key={`${title}-${item}`}>• {item}</li>) : <li>• Nothing critical here right now.</li>}
+      </ul>
+    </div>
+  );
+}
+
 function TrendChart({ snapshots, currentHealth }: { snapshots: Snapshot[]; currentHealth: number }) {
   const points = [...snapshots].slice(0, 6).reverse();
   const values = [...points.map((item) => item.health), currentHealth];
@@ -3827,6 +3928,117 @@ function buildCollaboratorPrepPack({
     followThrough,
     note,
     copyBlock: note,
+  };
+}
+
+function buildDailyCommandBrief({
+  workstreams,
+  decisions,
+  commitmentPulse,
+  protocolPlanner,
+  collaborationDebtQueue,
+  coachPlan,
+}: {
+  workstreams: ScoredWorkstream[];
+  decisions: Decision[];
+  commitmentPulse: CommitmentPulse;
+  protocolPlanner: ReturnType<typeof buildProtocolPlanner>;
+  collaborationDebtQueue: CollaborationDebtQueue;
+  coachPlan: CoachPlan;
+}): DailyCommandBrief {
+  const topWork = workstreams[0];
+  const nextDecision = decisions.find((item) => isPast(item.deadline)) ?? decisions[0];
+  const topDebt = collaborationDebtQueue.items[0];
+  const dueNow = commitmentPulse.items.filter((item) => item.lane === "due-now").slice(0, 2);
+  const davidTop3 = [
+    topWork
+      ? `Make or confirm the call on ${topWork.name}. ${topWork.decisionNeeded || `The next step is ${topWork.nextStep.toLowerCase()}`}`
+      : "Pick one active workstream worth real attention.",
+    nextDecision
+      ? `Resolve ${nextDecision.topic} or set a hard date for the decision. Floating decisions are execution tax.`
+      : "No logged decision debt. Keep it that way by naming the next call explicitly.",
+    dueNow[0]
+      ? `Clear the immediate commitment around ${dueNow[0].title} so nothing important silently rolls another day.`
+      : `Keep meetings tight. Only ${protocolPlanner.syncMinutes} minutes of live discussion look justified right now.`,
+  ].slice(0, 3);
+
+  const albertTop3 = [
+    topDebt
+      ? `Clean up ${topDebt.title} with this exact fix: ${topDebt.exactFix}`
+      : "Tighten the messiest handoff so the board buys back leverage today.",
+    topWork
+      ? `Advance ${topWork.name} without waiting for more ambient context. Next move: ${topWork.nextStep}`
+      : "Refresh the board and sharpen the next move on the top priority.",
+    coachPlan.albertPlan.split("\n")[0]?.trim() || "Turn the current board state into a crisp execution plan.",
+  ].slice(0, 3);
+
+  const sharedMoves = [
+    `Use async by default for ${protocolPlanner.asyncCount} item${protocolPlanner.asyncCount === 1 ? "" : "s"}; save meetings for genuine decisions and unblock paths.`,
+    dueNow[1]
+      ? `Close the loop on ${dueNow[1].title} before end of day.`
+      : `Leave today with one visible owner and one dated next move on the top stack.`,
+    topWork ? `Keep ${topWork.name} as the reference point for what “good progress” means today.` : "Keep the top workstream painfully obvious.",
+  ].slice(0, 3);
+
+  const doNotDo = [
+    protocolPlanner.syncMinutes <= 20
+      ? "Do not turn this into a status-heavy meeting day. The board does not justify it."
+      : "Do not discuss every workstream live. Most of the board still wants async handling.",
+    topDebt
+      ? `Do not add new work before ${topDebt.title} is cleaner. More motion on top of ambiguity is fake progress.`
+      : "Do not add fresh workstreams just because the current ones feel uncomfortable.",
+    topWork?.nextStep.trim().length && topWork.nextStep.trim().length < 24
+      ? `Do not accept vague next-step language on ${topWork.name}. Rewrite it before anyone starts.`
+      : "Do not leave the day without one explicit next owner on the highest-pressure thread.",
+  ].slice(0, 3);
+
+  const ifYouOnlyDoOneThing = topWork
+    ? `Get ${topWork.name} into a state where the next move and decision owner are impossible to misunderstand.`
+    : "Choose one workstream and make the next move concrete.";
+  const whyTodayMatters = topDebt
+    ? `${topDebt.title} is the clearest source of collaboration drag right now. If it stays muddy, the rest of the board gets more expensive by default.`
+    : nextDecision
+      ? `${nextDecision.topic} is still exerting pressure on execution. A real call today is worth more than another thoughtful paragraph.`
+      : `The board is usable, which means today is a chance to convert clarity into motion instead of adding more process.`;
+  const headline = topWork
+    ? `${topWork.name} should anchor the day, while Albert removes drag and David makes the call that unblocks momentum.`
+    : "Use today to reduce ambiguity, not to create more activity.";
+
+  const messageToDavid = [
+    "DAILY COMMAND BRIEF",
+    "",
+    `Headline: ${headline}`,
+    `If you only do one thing: ${ifYouOnlyDoOneThing}`,
+    `Why today matters: ${whyTodayMatters}`,
+    "",
+    "David should touch:",
+    ...davidTop3.map((item, index) => `${index + 1}. ${item}`),
+    "",
+    "Albert should run:",
+    ...albertTop3.map((item, index) => `${index + 1}. ${item}`),
+    "",
+    "Shared moves:",
+    ...sharedMoves.map((item, index) => `${index + 1}. ${item}`),
+    "",
+    "Do not do today:",
+    ...doNotDo.map((item, index) => `${index + 1}. ${item}`),
+  ].join("\n");
+
+  return {
+    headline,
+    davidTop3,
+    albertTop3,
+    sharedMoves,
+    doNotDo,
+    ifYouOnlyDoOneThing,
+    whyTodayMatters,
+    messageToDavid,
+    scorecard: {
+      focus: topWork ? `${topWork.score} pts` : "unset",
+      risk: topDebt ? `${topDebt.score} debt` : nextDecision ? "decision" : "steady",
+      meetingLoad: protocolPlanner.syncMinutes ? `${protocolPlanner.syncMinutes}m` : "async-first",
+      executionBias: protocolPlanner.asyncCount >= protocolPlanner.decisionCount ? "async" : "decision-heavy",
+    },
   };
 }
 
