@@ -388,6 +388,23 @@ type FocusModePlaybook = {
   }[];
 };
 
+type SessionStep = {
+  id: string;
+  title: string;
+  detail: string;
+  output: string;
+  durationMinutes: number;
+};
+
+type SessionRunner = {
+  headline: string;
+  totalMinutes: number;
+  steps: SessionStep[];
+  openingScript: string;
+  closingScript: string;
+  recap: string;
+};
+
 type CollaborationDebtItem = {
   id: string;
   title: string;
@@ -665,6 +682,8 @@ export function CollaborationCockpit() {
   const [selectedCollaborator, setSelectedCollaborator] = useState("David");
   const [mergeSelection, setMergeSelection] = useState<{ primaryId: string; secondaryId: string }>({ primaryId: "", secondaryId: "" });
   const [snapshotNote, setSnapshotNote] = useState("");
+  const [sessionDone, setSessionDone] = useState<Record<string, boolean>>({});
+  const [sessionNotes, setSessionNotes] = useState("");
   const [copyState, setCopyState] = useState<string>("");
   const [budget, setBudget] = useState<Budget>({ deepHours: 6, lightHours: 4, syncMinutes: 45 });
   const [inboxDraft, setInboxDraft] = useState(
@@ -848,6 +867,36 @@ export function CollaborationCockpit() {
     ]
   );
 
+  const sessionRunner = useMemo(
+    () =>
+      buildSessionRunner({
+        mode: focusMode,
+        playbook: focusModePlaybook,
+        focusNow,
+        selected,
+        protocolPlanner,
+        commitmentPulse,
+        decisionSprint,
+        collaborationDebtQueue,
+        collaboratorPrepPack,
+        handoffBrief,
+        coachPlan,
+      }),
+    [
+      focusMode,
+      focusModePlaybook,
+      focusNow,
+      selected,
+      protocolPlanner,
+      commitmentPulse,
+      decisionSprint,
+      collaborationDebtQueue,
+      collaboratorPrepPack,
+      handoffBrief,
+      coachPlan,
+    ]
+  );
+
   useEffect(() => {
     if (mergeSuggestion) {
       if (mergeSelection.primaryId === mergeSuggestion.primaryId && mergeSelection.secondaryId === mergeSuggestion.secondaryId) return;
@@ -866,6 +915,27 @@ export function CollaborationCockpit() {
     if (collaboratorMap.briefs.some((item) => item.name === selectedCollaborator)) return;
     setSelectedCollaborator(collaboratorMap.briefs[0]?.name ?? "David");
   }, [collaboratorMap.briefs, selectedCollaborator]);
+
+  useEffect(() => {
+    setSessionDone({});
+    setSessionNotes("");
+  }, [focusMode]);
+
+  function toggleSessionStep(id: string) {
+    setSessionDone((current) => ({ ...current, [id]: !current[id] }));
+  }
+
+  function markSessionComplete() {
+    const completedSteps = sessionRunner.steps.filter((step) => sessionDone[step.id]);
+    const recap = [
+      sessionRunner.recap,
+      "",
+      `Completed steps: ${completedSteps.length}/${sessionRunner.steps.length}`,
+      sessionNotes.trim() ? `Session notes: ${sessionNotes.trim()}` : "Session notes: none added.",
+    ].join("\\n");
+
+    copyText(recap, "session recap");
+  }
 
   function updateWorkstream(id: string, patch: Partial<Workstream>) {
     setState((current) => ({
@@ -1286,6 +1356,84 @@ export function CollaborationCockpit() {
                   <span className="mt-1 block text-sm leading-6 text-slate-600">Copy the exact artifact most useful for this moment.</span>
                 </button>
               ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl space-y-2">
+                <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-emerald-700">
+                  Guided session runner
+                </span>
+                <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Turn the current mode into an actual collaboration run, not just a smart dashboard.</h2>
+                <p className="text-sm leading-6 text-slate-600 sm:text-base">
+                  The runner converts the board into a short sequence with timing, opening script, expected outputs, and a copy-ready recap.
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[420px]">
+                <MetricCard label="Steps" value={String(sessionRunner.steps.length)} note={sessionRunner.headline} />
+                <MetricCard label="Planned time" value={`${sessionRunner.totalMinutes}m`} note={focusModePlaybook.primaryOutcome} />
+                <MetricCard label="Progress" value={`${sessionRunner.steps.filter((step) => sessionDone[step.id]).length}/${sessionRunner.steps.length}`} note={sessionRunner.steps.find((step) => !sessionDone[step.id])?.title ?? "Runner complete"} />
+              </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+              <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-sm font-semibold text-slate-900">Open with this</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600 whitespace-pre-line">{sessionRunner.openingScript}</p>
+                </div>
+                <div className="space-y-3">
+                  {sessionRunner.steps.map((step, index) => (
+                    <button
+                      key={step.id}
+                      type="button"
+                      onClick={() => toggleSessionStep(step.id)}
+                      className={`w-full rounded-2xl border p-4 text-left transition ${sessionDone[step.id] ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}
+                    >
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone={sessionDone[step.id] ? "border-emerald-200 bg-white text-emerald-700" : undefined}>{sessionDone[step.id] ? "done" : `step ${index + 1}`}</Badge>
+                            <h3 className="text-sm font-semibold text-slate-900">{step.title}</h3>
+                          </div>
+                          <p className="mt-2 text-sm leading-6 text-slate-600">{step.detail}</p>
+                        </div>
+                        <Badge>{step.durationMinutes} min</Badge>
+                      </div>
+                      <p className="mt-3 text-sm text-slate-700"><span className="font-medium text-slate-900">Expected output:</span> {step.output}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
+                  <p className="text-sm font-semibold text-blue-900">Close with this</p>
+                  <p className="mt-2 text-sm leading-6 text-blue-900/90 whitespace-pre-line">{sessionRunner.closingScript}</p>
+                </div>
+                <Field label="Session notes">
+                  <textarea
+                    className={`${inputClass} min-h-40`}
+                    value={sessionNotes}
+                    onChange={(e) => setSessionNotes(e.target.value)}
+                    placeholder="Add decisions made, blockers cleared, or follow-ups worth keeping."
+                  />
+                </Field>
+                <Field label="Copy-ready recap">
+                  <textarea readOnly className={`${inputClass} min-h-64 font-mono text-sm`} value={[sessionRunner.recap, "", sessionNotes.trim() ? `Session notes: ${sessionNotes.trim()}` : "Session notes: none added."].join("\\n")} />
+                </Field>
+                <div className="flex flex-wrap gap-3">
+                  <button type="button" onClick={markSessionComplete} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                    Copy session recap
+                  </button>
+                  <button type="button" onClick={() => copyText(sessionRunner.openingScript, "session opening")} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                    Copy opening
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -3679,6 +3827,105 @@ function buildCollaboratorPrepPack({
     followThrough,
     note,
     copyBlock: note,
+  };
+}
+
+function buildSessionRunner({
+  mode,
+  playbook,
+  focusNow,
+  selected,
+  protocolPlanner,
+  commitmentPulse,
+  decisionSprint,
+  collaborationDebtQueue,
+  collaboratorPrepPack,
+  handoffBrief,
+  coachPlan,
+}: {
+  mode: FocusMode;
+  playbook: FocusModePlaybook;
+  focusNow?: ScoredWorkstream;
+  selected?: Workstream | ScoredWorkstream;
+  protocolPlanner: ReturnType<typeof buildProtocolPlanner>;
+  commitmentPulse: CommitmentPulse;
+  decisionSprint: ReturnType<typeof buildDecisionSprint>;
+  collaborationDebtQueue: CollaborationDebtQueue;
+  collaboratorPrepPack: CollaboratorPrepPack;
+  handoffBrief: string;
+  coachPlan: CoachPlan;
+}): SessionRunner {
+  const activeLabel = selected?.name ?? focusNow?.name ?? "the current top workstream";
+  const nextCommitment = commitmentPulse.items[0]?.title ?? activeLabel;
+  const nextDecision = decisionSprint.items[0]?.topic ?? "the most important open decision";
+  const topDebt = collaborationDebtQueue.items[0]?.title ?? "the messiest handoff on the board";
+  const collaborator = collaboratorPrepPack.collaborator;
+
+  const byMode: Record<FocusMode, SessionStep[]> = {
+    "daily-sync": [
+      { id: "frame", title: "Frame the sync", detail: `Start with ${activeLabel} and explain that the goal is one decision and one confirmed owner, not a status recital.`, output: "Shared outcome for the sync", durationMinutes: 3 },
+      { id: "decide", title: "Resolve the sharpest call", detail: `Use the decision sprint on ${nextDecision} before lower-leverage updates steal the time.`, output: "Decision or dated owner for the decision", durationMinutes: 7 },
+      { id: "commit", title: "Lock the next commitment", detail: `Confirm the next move on ${nextCommitment} and name who does what by when.`, output: "Named owner + dated next action", durationMinutes: 5 },
+      { id: "async-cut", title: "Push the rest async", detail: `Anything outside the ${protocolPlanner.syncMinutes}-minute live scope goes into the async update immediately.`, output: "Clean async follow-up list", durationMinutes: 3 },
+    ],
+    "async-cleanup": [
+      { id: "debt", title: "Fix the most expensive handoff", detail: `Clean up ${topDebt} first so the board stops paying for avoidable ambiguity.`, output: "Sharper owner / blocker / next step", durationMinutes: 8 },
+      { id: "message", title: "Draft the outbound note", detail: `Use the coach output to send one message that says what changed, why it matters, the blocker, and the exact next move.`, output: "Forwardable async message", durationMinutes: 6 },
+      { id: "board", title: "Patch the board", detail: `Update the underlying workstream right away so the cleanup is not trapped in a one-off message.`, output: "Board reflects current reality", durationMinutes: 4 },
+    ],
+    "one-on-one": [
+      { id: "open", title: `Open the 1:1 with ${collaborator}`, detail: collaboratorPrepPack.openWith, output: "Shared tone and purpose", durationMinutes: 3 },
+      { id: "ask", title: "Make the direct ask", detail: collaboratorPrepPack.ask, output: "Explicit answer or clear follow-up owner", durationMinutes: 7 },
+      { id: "follow-through", title: "Leave with follow-through", detail: collaboratorPrepPack.followThrough[0] ?? `Update ${activeLabel} immediately after the conversation.`, output: "Recap and updated board state", durationMinutes: 5 },
+    ],
+    "strategy-review": [
+      { id: "pattern", title: "Name the system pattern", detail: `Start with the retro signal instead of individual anecdotes.`, output: "One systemic problem chosen", durationMinutes: 6 },
+      { id: "decision", title: "Review the key decision", detail: `Pressure-test ${nextDecision} using evidence rather than opinions.`, output: "Decision path or evidence gap", durationMinutes: 8 },
+      { id: "intervention", title: "Pick the smallest useful intervention", detail: `Choose one operating change that buys back leverage without adding ceremony.`, output: "One concrete experiment", durationMinutes: 6 },
+    ],
+    "full-cockpit": [
+      { id: "scan", title: "Scan the board honestly", detail: `Look at ${activeLabel}, ${nextCommitment}, and ${topDebt} before anything else.`, output: "Truthful view of current pressure", durationMinutes: 6 },
+      { id: "focus", title: "Pick the real bottleneck", detail: `Decide whether the problem is priority, commitment, debt, or decision drift.`, output: "One bottleneck named", durationMinutes: 5 },
+      { id: "convert", title: "Convert insight into action", detail: `Use the coach plan and brief output so the session ends with usable follow-through, not just analysis.`, output: "Copy-ready next action", durationMinutes: 5 },
+    ],
+  };
+
+  const steps = byMode[mode];
+  const totalMinutes = steps.reduce((sum, step) => sum + step.durationMinutes, 0);
+  const openingScript = `Mode: ${playbook.mode.replace(/-/g, " ")}
+
+Open with: ${playbook.primaryOutcome}
+
+Focus first on ${activeLabel}. Keep the discussion tight enough that the result can be captured in one recap.`;
+  const closingScript = `Before ending, confirm:
+- the decision or commitment made
+- the next owner and date
+- what is explicitly async after this
+
+If that is still fuzzy, the session is not done.`;
+  const recap = [
+    `SESSION RECAP · ${playbook.mode.replace(/-/g, " ")}`,
+    "",
+    `Headline: ${playbook.headline}`,
+    `Primary outcome: ${playbook.primaryOutcome}`,
+    `Focus workstream: ${activeLabel}`,
+    `Decision to watch: ${nextDecision}`,
+    `Coach note: ${coachPlan.davidMessage.split("\\n")[0] ?? coachPlan.headline}`,
+    "",
+    "Expected outputs:",
+    ...steps.map((step, index) => `${index + 1}. ${step.output}`),
+    "",
+    "Suggested async follow-up:",
+    handoffBrief,
+  ].join("\\n");
+
+  return {
+    headline: `Run a ${totalMinutes}-minute ${playbook.mode.replace(/-/g, " ")} session with a real finish line.`,
+    totalMinutes,
+    steps,
+    openingScript,
+    closingScript,
+    recap,
   };
 }
 
