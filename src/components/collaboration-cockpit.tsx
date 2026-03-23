@@ -238,6 +238,31 @@ type InterventionSimulation = {
   exactMove: string;
 };
 
+type FollowThroughItem = {
+  id: string;
+  title: string;
+  owner: string;
+  due: string;
+  urgency: "high" | "medium" | "low";
+  kind: "commitment" | "decision" | "follow-up";
+  workstreamName: string;
+  source: string;
+  action: string;
+  risk: string;
+  proposedNextStep: string;
+  message: string;
+};
+
+type FollowThroughDigest = {
+  score: number;
+  summary: string;
+  headline: string;
+  items: FollowThroughItem[];
+  message: string;
+  decisionNote: string;
+  suggestedWorkstream: string;
+};
+
 type AppState = {
   workstreams: Workstream[];
   updates: Update[];
@@ -712,6 +737,9 @@ export function CollaborationCockpit() {
   const [transcriptDraft, setTranscriptDraft] = useState(
     "David: Central onboarding is still muddy because auth exceptions keep leaking across docs. Albert: I can turn this into a tighter recommendation today, but I need David to confirm whether we optimize the happy path first. David: Yes, prioritize the happy path and write down the kill criteria for exception handling by Monday. Albert: Got it. I'll update the workstream, log the decision, and send a crisp async note after the draft is ready."
   );
+  const [followThroughDraft, setFollowThroughDraft] = useState(
+    "David: Let's prioritize the happy path first and avoid exception creep this week. Albert: I'll ship the revised onboarding draft tomorrow and log the kill criteria by Monday. Lone: I can review the wording Friday if you send the short version. Albert: Great — I'll send the short version Friday morning and flag any blocker if auth edge cases resurface."
+  );
   const [newUpdate, setNewUpdate] = useState({
     title: "",
     detail: "",
@@ -836,6 +864,10 @@ export function CollaborationCockpit() {
   const conversationDigest = useMemo(
     () => analyzeConversationTranscript({ draft: transcriptDraft, selected, focusNow }),
     [transcriptDraft, selected, focusNow]
+  );
+  const followThroughDigest = useMemo(
+    () => analyzeFollowThroughDraft({ draft: followThroughDraft, selected, focusNow, workstreams: scoredWorkstreams }),
+    [followThroughDraft, selected, focusNow, scoredWorkstreams]
   );
   const latestSnapshot = state.snapshots[0];
   const healthDelta = latestSnapshot ? collaborationHealth - latestSnapshot.health : 0;
@@ -1084,6 +1116,65 @@ export function CollaborationCockpit() {
       ],
     }));
     setSelectedId(created.id);
+  }
+
+  function applyFollowThroughDigest() {
+    if (!followThroughDigest.items.length) return;
+
+    setState((current) => {
+      const existingNames = new Set(current.workstreams.map((item) => item.name.toLowerCase()));
+      const workstreams = [...current.workstreams];
+      const updates = [...current.updates];
+      const decisions = [...current.decisions];
+
+      followThroughDigest.items.forEach((item) => {
+        const linked = workstreams.find((workstream) => workstream.name === item.workstreamName);
+
+        if (!linked && item.workstreamName && !existingNames.has(item.workstreamName.toLowerCase())) {
+          workstreams.unshift({
+            id: cryptoId(),
+            name: item.workstreamName,
+            owner: item.owner,
+            status: item.kind === "follow-up" ? "watch" : "active",
+            energy: item.urgency === "high" ? "deep" : "light",
+            impact: item.kind === "decision" ? 8 : 7,
+            urgency: item.urgency === "high" ? 9 : item.urgency === "medium" ? 7 : 5,
+            confidence: item.kind === "decision" ? 6 : 7,
+            lastTouched: todayIso(),
+            nextStep: item.proposedNextStep,
+            blocker: item.risk.toLowerCase().includes("none") ? "" : item.risk,
+            notes: `Imported from follow-through builder. Source: ${item.source}`,
+            waitingOn: item.owner === "David" ? "David" : "",
+            desiredOutcome: item.action,
+            decisionNeeded: item.kind === "decision" ? item.title : "",
+          });
+          existingNames.add(item.workstreamName.toLowerCase());
+        }
+
+        updates.unshift({
+          id: cryptoId(),
+          title: `${item.kind === "decision" ? "Decision" : "Follow-through"} · ${item.title}`,
+          detail: `${item.action}\nOwner: ${item.owner}\nDue: ${prettyDate(item.due)}\nRisk: ${item.risk}\nSource: ${item.source}`,
+          createdAt: todayIso(),
+          relatedWorkstream: item.workstreamName,
+          type: item.kind === "decision" ? "decision" : "from-albert",
+        });
+
+        if (item.kind === "decision") {
+          decisions.unshift({
+            id: cryptoId(),
+            topic: item.title,
+            options: `Owner: ${item.owner}`,
+            recommendation: item.action,
+            confidence: item.urgency === "high" ? 6 : 7,
+            deadline: item.due,
+            impactArea: item.workstreamName,
+          });
+        }
+      });
+
+      return { ...current, workstreams, updates, decisions };
+    });
   }
 
   function applyMergeSuggestion() {
@@ -2769,6 +2860,74 @@ export function CollaborationCockpit() {
                   </button>
                   <button type="button" onClick={applyConversationDigest} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
                     Create workstream + decision items
+                  </button>
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="Follow-through builder" subtitle="Paste rough meeting notes and turn them into dated commitments, decision chases, and the exact follow-up note David or Albert can send next.">
+              <div className="grid gap-4">
+                <Field label="Meeting notes, recap, or voice transcript">
+                  <textarea
+                    className={`${inputClass} min-h-40`}
+                    value={followThroughDraft}
+                    onChange={(e) => setFollowThroughDraft(e.target.value)}
+                    placeholder="Paste rough follow-up notes and let the app extract owners, due dates, and the next message."
+                  />
+                </Field>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Follow-through quality</p>
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                      <p className="text-3xl font-semibold tracking-tight text-slate-900">{followThroughDigest.score}%</p>
+                      <Badge tone={followThroughDigest.score >= 80 ? statusTone.active : followThroughDigest.score >= 60 ? statusTone.watch : statusTone.blocked}>{followThroughDigest.score >= 80 ? "sharp" : followThroughDigest.score >= 60 ? "usable" : "thin"}</Badge>
+                    </div>
+                    <p className="mt-3 text-sm text-slate-600">{followThroughDigest.summary}</p>
+                  </div>
+                  <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 md:col-span-2">
+                    <p className="text-sm font-semibold text-blue-900">What needs to happen next</p>
+                    <p className="mt-2 text-sm leading-6 text-blue-900/90">{followThroughDigest.headline}</p>
+                    <p className="mt-3 text-sm text-blue-900/90">Suggested workstream: <span className="font-medium">{followThroughDigest.suggestedWorkstream}</span></p>
+                  </div>
+                </div>
+                <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="text-sm font-semibold text-slate-900">Extracted commitments</h3>
+                      <Badge>{followThroughDigest.items.length}</Badge>
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      {followThroughDigest.items.length ? followThroughDigest.items.map((item) => (
+                        <div key={item.id} className="rounded-2xl border border-slate-200 bg-white p-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone={nudgeTone[item.urgency]}>{item.urgency}</Badge>
+                            <Badge>{item.kind}</Badge>
+                            <Badge>{item.owner}</Badge>
+                            <Badge>{prettyDate(item.due)}</Badge>
+                          </div>
+                          <p className="mt-2 text-sm font-semibold text-slate-900">{item.title}</p>
+                          <p className="mt-2 text-sm leading-6 text-slate-600">{item.action}</p>
+                          <p className="mt-2 text-xs text-slate-500">Workstream: {item.workstreamName} · Risk: {item.risk}</p>
+                        </div>
+                      )) : <p className="text-sm text-slate-500">No real commitments detected yet. Add owners, dates, or actual verbs and the builder stops shrugging.</p>}
+                    </div>
+                  </div>
+                  <div className="grid gap-3">
+                    <Field label="Copy-ready follow-up note">
+                      <textarea readOnly className={`${inputClass} min-h-44 font-mono text-sm`} value={followThroughDigest.message} />
+                    </Field>
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                      <p className="text-sm font-semibold text-amber-900">Decision pressure</p>
+                      <p className="mt-2 text-sm leading-6 text-amber-900/90">{followThroughDigest.decisionNote}</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <button type="button" onClick={() => copyText(followThroughDigest.message, "follow-through note")} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">
+                    Copy follow-up note
+                  </button>
+                  <button type="button" onClick={applyFollowThroughDigest} disabled={!followThroughDigest.items.length} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
+                    Add commitments to board
                   </button>
                 </div>
               </div>
@@ -6384,6 +6543,118 @@ function distillInboxDraft({
   };
 }
 
+function analyzeFollowThroughDraft({
+  draft,
+  selected,
+  focusNow,
+  workstreams,
+}: {
+  draft: string;
+  selected?: Workstream;
+  focusNow?: ScoredWorkstream;
+  workstreams: ScoredWorkstream[];
+}): FollowThroughDigest {
+  const cleaned = draft.trim();
+  const fallbackWorkstream = selected?.name ?? focusNow?.name ?? workstreams[0]?.name ?? "General follow-through";
+  if (!cleaned) {
+    return {
+      score: 22,
+      summary: "No follow-through signal yet.",
+      headline: "Paste actual notes and the builder will pull out commitments, dates, and the next note.",
+      items: [],
+      message: "No follow-up note yet.",
+      decisionNote: "No decision pressure detected.",
+      suggestedWorkstream: fallbackWorkstream,
+    };
+  }
+
+  const lines = cleaned
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => line.split(/(?<=[.!?])\s+/).map((part) => part.trim()).filter(Boolean));
+
+  const items = lines
+    .map((line, index) => buildFollowThroughItem({ line, index, workstreams, fallbackWorkstream }))
+    .filter((item): item is FollowThroughItem => Boolean(item));
+
+  const score = clamp(35 + items.length * 14 + (/(tomorrow|monday|tuesday|wednesday|thursday|friday|next week|\d{4}-\d{2}-\d{2})/i.test(cleaned) ? 12 : 0), 24, 96);
+  const urgentCount = items.filter((item) => item.urgency === "high").length;
+  const decisionCount = items.filter((item) => item.kind === "decision").length;
+  const summary = items.length
+    ? `${items.length} follow-through item${items.length === 1 ? "" : "s"} detected, with ${urgentCount} urgent and ${decisionCount} decision-level.`
+    : "The notes are still too fuzzy. Named owners and dates would help a lot.";
+  const headline = items.length
+    ? `${items[0]?.owner} owns the sharpest next move: ${items[0]?.title} by ${prettyDate(items[0]?.due)}.`
+    : "Nothing actionable surfaced yet. This is still recap-shaped, not follow-through-shaped.";
+  const messageLines = [
+    `Follow-up on ${fallbackWorkstream}:`,
+    ...items.slice(0, 5).map((item) => `- ${item.owner} → ${item.action} (due ${prettyDate(item.due)})`),
+    items.some((item) => item.risk && !item.risk.toLowerCase().includes("none"))
+      ? `Risk to watch: ${items.find((item) => item.risk && !item.risk.toLowerCase().includes("none"))?.risk}`
+      : "Risk to watch: no explicit blocker named, so the main risk is silent slippage.",
+    items.length ? `Next check-in: ${items[0]?.owner} confirms progress on ${prettyDate(items[0]?.due)}.` : "Next check-in: add one dated commitment.",
+  ];
+
+  return {
+    score,
+    summary,
+    headline,
+    items,
+    message: messageLines.join("\\n"),
+    decisionNote: decisionCount
+      ? `${decisionCount} item${decisionCount === 1 ? " is" : "s are"} decision-shaped. Log them instead of trusting memory.`
+      : "No explicit decision pressure detected. Could be true. Could also be the notes ducking the hard bit.",
+    suggestedWorkstream: items[0]?.workstreamName ?? fallbackWorkstream,
+  };
+}
+
+function buildFollowThroughItem({
+  line,
+  index,
+  workstreams,
+  fallbackWorkstream,
+}: {
+  line: string;
+  index: number;
+  workstreams: ScoredWorkstream[];
+  fallbackWorkstream: string;
+}): FollowThroughItem | null {
+  const cleaned = line.replace(/^[-*•]\s*/, "").trim();
+  if (cleaned.length < 18) return null;
+  if (!/(will|by |tomorrow|next|review|send|ship|update|confirm|decide|log|draft|follow up|share|check)/i.test(cleaned)) return null;
+
+  const owner = detectOwner(cleaned, workstreams);
+  const due = detectDueDate(cleaned);
+  const workstreamName = detectWorkstream(cleaned, workstreams, fallbackWorkstream);
+  const kind = /(decide|decision|approve|confirm whether|yes\/no|choose|sign off)/i.test(cleaned)
+    ? "decision"
+    : /(follow up|send|share|review|reply|check in)/i.test(cleaned)
+      ? "follow-up"
+      : "commitment";
+  const urgency = daysUntil(due) <= 1 ? "high" : daysUntil(due) <= 4 ? "medium" : "low";
+  const action = cleaned.replace(/^[A-Z][a-z]+:\s*/, "").trim();
+  const title = normalizeSentence(action.replace(/^(I'll|I will|we'll|we will|let's)\s+/i, "").split(/[,.]/)[0] || action);
+  const risk = /blocker|risk|if|unless|waiting/i.test(cleaned)
+    ? cleaned.match(/(blocker.*|risk.*|if .*|unless .*|waiting.*)$/i)?.[0] ?? "Possible dependency risk in source note."
+    : "No explicit blocker named.";
+
+  return {
+    id: `follow-${index}`,
+    title,
+    owner,
+    due,
+    urgency,
+    kind,
+    workstreamName,
+    source: cleaned,
+    action,
+    risk,
+    proposedNextStep: action,
+    message: `${owner}, quick follow-up on ${workstreamName}: ${action} by ${prettyDate(due)}.`,
+  };
+}
+
 function analyzeConversationTranscript({
   draft,
   selected,
@@ -6488,6 +6759,24 @@ function extractTranscriptActions(parts: string[], topicSeed: string, due: strin
         why: normalizeSentence(inferMatters(parts) || `This keeps ${topicSeed} from drifting back into chat sludge.`),
       };
     });
+}
+
+function detectOwner(text: string, workstreams: ScoredWorkstream[]) {
+  if (/^David:/i.test(text) || /david/i.test(text)) return "David";
+  if (/^Albert:/i.test(text) || /albert/i.test(text)) return "Albert";
+  if (/^Lone:/i.test(text) || /lone/i.test(text)) return "Lone";
+  const knownOwner = workstreams.find((item) => item.owner && new RegExp(`\b${item.owner}\b`, "i").test(text))?.owner;
+  return knownOwner || "Shared";
+}
+
+function detectWorkstream(text: string, workstreams: ScoredWorkstream[], fallback: string) {
+  const exact = workstreams.find((item) => text.toLowerCase().includes(item.name.toLowerCase()));
+  if (exact) return exact.name;
+  const topical = workstreams.find((item) => {
+    const tokens = item.name.toLowerCase().split(/\s+/).filter((token) => token.length >= 4);
+    return tokens.some((token) => text.toLowerCase().includes(token));
+  });
+  return topical?.name || fallback;
 }
 
 function detectTopicFromTranscript(text: string) {
