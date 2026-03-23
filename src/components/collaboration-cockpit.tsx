@@ -263,11 +263,35 @@ type FollowThroughDigest = {
   suggestedWorkstream: string;
 };
 
+type CollaboratorProfile = {
+  id: string;
+  name: string;
+  role: string;
+  preferredStyle: string;
+  appreciation: string;
+  frictionWatchout: string;
+  nextAsk: string;
+  lastSync: string;
+  notes: string;
+};
+
+type RelationshipBrief = {
+  collaborator: string;
+  completeness: number;
+  headline: string;
+  approach: string;
+  avoid: string;
+  nextAsk: string;
+  followUp: string;
+  copyBlock: string;
+};
+
 type AppState = {
   workstreams: Workstream[];
   updates: Update[];
   decisions: Decision[];
   snapshots: Snapshot[];
+  collaboratorProfiles: CollaboratorProfile[];
 };
 
 type BootPayload = {
@@ -581,8 +605,8 @@ type ConversationDigest = {
   createdWorkstream: Omit<Workstream, "id">;
 };
 
-const STORAGE_KEY = "collab-cockpit-v4";
-const LEGACY_KEYS = ["collab-cockpit-v3", "collab-cockpit-v2", "collab-cockpit-v1"];
+const STORAGE_KEY = "collab-cockpit-v5";
+const LEGACY_KEYS = ["collab-cockpit-v4", "collab-cockpit-v3", "collab-cockpit-v2", "collab-cockpit-v1"];
 
 const initialState: AppState = {
   workstreams: [
@@ -668,6 +692,30 @@ const initialState: AppState = {
     },
   ],
   snapshots: [],
+  collaboratorProfiles: [
+    {
+      id: cryptoId(),
+      name: "David",
+      role: "Product lead",
+      preferredStyle: "Direct, crisp, short on fluff. Lead with the tradeoff and exact ask.",
+      appreciation: "Clear thinking, honesty, and visible forward motion.",
+      frictionWatchout: "Vague asks, long scene-setting, or fuzzy ownership.",
+      nextAsk: "Confirm the decision bar before work expands.",
+      lastSync: todayIso(),
+      notes: "Prefers action over pep talks. Useful prep beats persuasive framing.",
+    },
+    {
+      id: cryptoId(),
+      name: "Albert",
+      role: "Execution partner",
+      preferredStyle: "Show the current state, the blocker, and the next move in plain language.",
+      appreciation: "Clear direction, explicit ownership, and enough context to act without another loop.",
+      frictionWatchout: "Half-decisions that sound final, or updates that skip what actually changed.",
+      nextAsk: "Turn fuzzy pressure into a concrete deliverable and verify it live.",
+      lastSync: todayIso(),
+      notes: "Should do the work first, then report cleanly.",
+    },
+  ],
 };
 
 const statusTone: Record<Status, string> = {
@@ -799,6 +847,14 @@ export function CollaborationCockpit() {
   const collaboratorPrepPack = useMemo(
     () => buildCollaboratorPrepPack({ briefs: collaboratorMap.briefs, workstreams: scoredWorkstreams, decisions: state.decisions, collaborator: selectedCollaborator }),
     [collaboratorMap.briefs, scoredWorkstreams, state.decisions, selectedCollaborator]
+  );
+  const collaboratorProfile = useMemo(
+    () => getCollaboratorProfile(state.collaboratorProfiles, selectedCollaborator),
+    [state.collaboratorProfiles, selectedCollaborator]
+  );
+  const relationshipBrief = useMemo(
+    () => buildRelationshipBrief({ prepPack: collaboratorPrepPack, profile: collaboratorProfile }),
+    [collaboratorPrepPack, collaboratorProfile]
   );
   const collaborationRetro = useMemo(
     () => buildCollaborationRetro({ workstreams: scoredWorkstreams, decisions: state.decisions, snapshots: state.snapshots, collaboratorMap }),
@@ -977,6 +1033,17 @@ export function CollaborationCockpit() {
     if (collaboratorMap.briefs.some((item) => item.name === selectedCollaborator)) return;
     setSelectedCollaborator(collaboratorMap.briefs[0]?.name ?? "David");
   }, [collaboratorMap.briefs, selectedCollaborator]);
+
+  function patchCollaboratorProfile(name: string, patch: Partial<CollaboratorProfile>) {
+    setState((current) => {
+      const existing = getCollaboratorProfile(current.collaboratorProfiles, name);
+      const nextProfile = normalizeCollaboratorProfile({ ...existing, ...patch, name });
+      const profiles = current.collaboratorProfiles.some((item) => item.name === name)
+        ? current.collaboratorProfiles.map((item) => (item.name === name ? nextProfile : item))
+        : [...current.collaboratorProfiles, nextProfile];
+      return { ...current, collaboratorProfiles: profiles };
+    });
+  }
 
   useEffect(() => {
     setSessionDone({});
@@ -1345,6 +1412,9 @@ export function CollaborationCockpit() {
           updates: parsed.updates,
           decisions: parsed.decisions,
           snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots : [],
+          collaboratorProfiles: Array.isArray(parsed.collaboratorProfiles)
+            ? parsed.collaboratorProfiles.map(normalizeCollaboratorProfile)
+            : initialState.collaboratorProfiles,
         };
         setState(nextState);
         setSelectedId(nextState.workstreams[0]?.id ?? "");
@@ -2084,6 +2154,71 @@ export function CollaborationCockpit() {
                 <Field label="Copy-ready note">
                   <textarea readOnly className={`${inputClass} min-h-60 font-mono text-sm`} value={collaboratorPrepPack.note} />
                 </Field>
+              </div>
+            </Panel>
+
+            <Panel title="Collaborator memory" subtitle="Keeps the human context the board cannot infer: working style, friction patterns, and the exact ask worth making next.">
+              <div className="grid gap-4">
+                <div className="grid gap-3 md:grid-cols-[0.9fr_1.1fr_1.1fr_1.1fr]">
+                  <Field label="Profile">
+                    <select className={inputClass} value={selectedCollaborator} onChange={(e) => setSelectedCollaborator(e.target.value)}>
+                      {Array.from(new Set([...collaboratorMap.briefs.map((person) => person.name), ...state.collaboratorProfiles.map((person) => person.name)])).map((person) => (
+                        <option key={person} value={person}>{person}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <MetricCard label="Profile score" value={`${relationshipBrief.completeness}%`} note={relationshipBrief.headline} />
+                  <MetricCard label="Temperature" value={collaboratorPrepPack.temperature} note={collaboratorPrepPack.workstreams.join(" · ") || "No linked workstreams yet"} />
+                  <MetricCard label="Next ask" value={relationshipBrief.nextAsk ? "Ready" : "Thin"} note={relationshipBrief.nextAsk || "Capture what this person should be asked next."} />
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="Role">
+                      <input className={inputClass} value={collaboratorProfile.role} onChange={(e) => patchCollaboratorProfile(selectedCollaborator, { role: e.target.value })} />
+                    </Field>
+                    <Field label="Last sync">
+                      <input type="date" className={inputClass} value={collaboratorProfile.lastSync} onChange={(e) => patchCollaboratorProfile(selectedCollaborator, { lastSync: e.target.value })} />
+                    </Field>
+                    <Field label="Preferred style">
+                      <textarea className={`${inputClass} min-h-28`} value={collaboratorProfile.preferredStyle} onChange={(e) => patchCollaboratorProfile(selectedCollaborator, { preferredStyle: e.target.value })} />
+                    </Field>
+                    <Field label="What lands well">
+                      <textarea className={`${inputClass} min-h-28`} value={collaboratorProfile.appreciation} onChange={(e) => patchCollaboratorProfile(selectedCollaborator, { appreciation: e.target.value })} />
+                    </Field>
+                    <Field label="Friction watchout">
+                      <textarea className={`${inputClass} min-h-28`} value={collaboratorProfile.frictionWatchout} onChange={(e) => patchCollaboratorProfile(selectedCollaborator, { frictionWatchout: e.target.value })} />
+                    </Field>
+                    <Field label="Next ask worth making">
+                      <textarea className={`${inputClass} min-h-28`} value={collaboratorProfile.nextAsk} onChange={(e) => patchCollaboratorProfile(selectedCollaborator, { nextAsk: e.target.value })} />
+                    </Field>
+                  </div>
+
+                  <div className="space-y-4">
+                    <Field label="Private notes">
+                      <textarea className={`${inputClass} min-h-40`} value={collaboratorProfile.notes} onChange={(e) => patchCollaboratorProfile(selectedCollaborator, { notes: e.target.value })} />
+                    </Field>
+                    <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-blue-900">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold">Relationship brief for {relationshipBrief.collaborator}</p>
+                          <p className="mt-2 text-sm leading-6 opacity-90">{relationshipBrief.headline}</p>
+                        </div>
+                        <button type="button" onClick={() => copyText(relationshipBrief.copyBlock, `${relationshipBrief.collaborator} relationship brief`)} className="rounded-xl border border-white/70 bg-white/80 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-white">
+                          Copy brief
+                        </button>
+                      </div>
+                      <div className="mt-4 space-y-3 text-sm leading-6">
+                        <p><span className="font-medium text-slate-900">Approach:</span> {relationshipBrief.approach}</p>
+                        <p><span className="font-medium text-slate-900">Avoid:</span> {relationshipBrief.avoid}</p>
+                        <p><span className="font-medium text-slate-900">Next ask:</span> {relationshipBrief.nextAsk}</p>
+                      </div>
+                    </div>
+                    <Field label="Copy-ready follow-up">
+                      <textarea readOnly className={`${inputClass} min-h-48 bg-white font-mono text-sm`} value={relationshipBrief.followUp} />
+                    </Field>
+                  </div>
+                </div>
               </div>
             </Panel>
 
@@ -6316,6 +6451,24 @@ function normalizeWorkstream(workstream: Partial<Workstream>) {
   } satisfies Workstream;
 }
 
+function normalizeCollaboratorProfile(profile: Partial<CollaboratorProfile>) {
+  return {
+    id: profile.id ?? cryptoId(),
+    name: profile.name ?? "Unnamed collaborator",
+    role: profile.role ?? "",
+    preferredStyle: profile.preferredStyle ?? "",
+    appreciation: profile.appreciation ?? "",
+    frictionWatchout: profile.frictionWatchout ?? "",
+    nextAsk: profile.nextAsk ?? "",
+    lastSync: profile.lastSync ?? todayIso(),
+    notes: profile.notes ?? "",
+  } satisfies CollaboratorProfile;
+}
+
+function getCollaboratorProfile(profiles: CollaboratorProfile[], collaborator: string) {
+  return profiles.find((item) => item.name === collaborator) ?? normalizeCollaboratorProfile({ name: collaborator || "David" });
+}
+
 function normalizeAppState(parsed: Partial<AppState> | null | undefined) {
   if (!parsed) return initialState;
 
@@ -6324,6 +6477,7 @@ function normalizeAppState(parsed: Partial<AppState> | null | undefined) {
     updates: Array.isArray(parsed.updates) ? parsed.updates : initialState.updates,
     decisions: Array.isArray(parsed.decisions) ? parsed.decisions : initialState.decisions,
     snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots : [],
+    collaboratorProfiles: Array.isArray(parsed.collaboratorProfiles) ? parsed.collaboratorProfiles.map(normalizeCollaboratorProfile) : initialState.collaboratorProfiles,
   } satisfies AppState;
 }
 
@@ -6359,6 +6513,21 @@ function getStoredState() {
   } catch {
     return initialState;
   }
+}
+
+function buildRelationshipBrief({ prepPack, profile }: { prepPack: CollaboratorPrepPack; profile: CollaboratorProfile }): RelationshipBrief {
+  const filled = [profile.role, profile.preferredStyle, profile.appreciation, profile.frictionWatchout, profile.nextAsk, profile.notes].filter((item) => item.trim()).length;
+  const completeness = Math.round((filled / 6) * 100);
+  const headline = completeness >= 67
+    ? "This prep now remembers how to work with the person, not just what the board says."
+    : "Useful start, but still thin on human context. Fill the profile before a sensitive sync.";
+  const approach = profile.preferredStyle.trim() || `Lead with ${prepPack.openWith.toLowerCase()}`;
+  const avoid = profile.frictionWatchout.trim() || prepPack.watchouts[0] || "Avoid vague asks and leave with one explicit owner.";
+  const nextAsk = profile.nextAsk.trim() || prepPack.ask;
+  const followUp = `${prepPack.collaborator} — quick recap.\n\nWhat I heard / want to anchor:\n- ${prepPack.pressure}\n\nWhat I propose next:\n- ${nextAsk}\n\nHow I will work with you on it:\n- ${approach}\n\nWhat I'll avoid:\n- ${avoid}\n\nFollow-through:\n- ${prepPack.followThrough[0] ?? "Update the board and send the recap right after the conversation."}`;
+  const copyBlock = [`Relationship brief · ${prepPack.collaborator}`, `Headline: ${headline}`, `Approach: ${approach}`, `Avoid: ${avoid}`, `Next ask: ${nextAsk}`, "", "Follow-up", followUp].join('\n');
+
+  return { collaborator: prepPack.collaborator, completeness, headline, approach, avoid, nextAsk, followUp, copyBlock };
 }
 
 function getBootPayload(): BootPayload {
