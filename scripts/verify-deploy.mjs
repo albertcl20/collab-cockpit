@@ -17,6 +17,56 @@ async function fetchWithCookies(url, init = {}) {
   });
 }
 
+async function verifyHttpRoutes(cookieHeader) {
+  const checks = ['/', '/login', '/api/health', '/brief'];
+  for (const route of checks) {
+    const response = await fetchWithCookies(`${baseUrl}${route}`, {
+      headers: cookieHeader ? { cookie: cookieHeader } : {},
+    });
+
+    if (response.status !== 200) {
+      throw new Error(`${route} returned ${response.status}`);
+    }
+
+    const body = await response.text();
+    if (route === '/' && (!body.includes('Decision sprint') || !body.includes('Collaboration debt queue') || !body.includes('Operating memo') || !body.includes('Stakeholder comms studio') || !body.includes('Delegation board') || !body.includes('Collaborator memory') || !body.includes('Board portfolio') || !body.includes('Open brief view'))) {
+      throw new Error('Home page is up but missing expected collaboration features');
+    }
+
+    if (route === '/brief' && !body.includes('Loading brief')) {
+      throw new Error('Brief route did not return the expected shell');
+    }
+
+    console.log(`ok ${route} -> ${response.status}`);
+  }
+}
+
+async function verifyBrowserFlow() {
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+
+  await page.goto(`${baseUrl}/login`, { waitUntil: 'networkidle' });
+
+  if (password) {
+    await page.getByLabel('Password').fill(password);
+    await page.getByRole('button', { name: 'Unlock' }).click();
+    await page.waitForLoadState('networkidle');
+  }
+
+  await page.waitForLoadState('networkidle');
+  await page.waitForSelector('text=Open brief view', { timeout: 30000 });
+  console.log('ok browser / -> rendered');
+
+  await page.goto(`${baseUrl}/brief`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('text=Brief view', { timeout: 30000 });
+  await page.waitForSelector('text=What David should care about first', { timeout: 30000 });
+  await page.waitForSelector('text=Copy markdown brief', { timeout: 30000 });
+  console.log('ok browser /brief -> rendered');
+
+  await browser.close();
+}
+
 async function main() {
   const loginPage = await fetchWithCookies(`${baseUrl}/login`);
   if (loginPage.status !== 200) {
@@ -41,27 +91,8 @@ async function main() {
     cookieHeader = setCookie.split(';')[0];
   }
 
-  const checks = ['/', '/login', '/api/health', '/brief'];
-  for (const route of checks) {
-    const response = await fetchWithCookies(`${baseUrl}${route}`, {
-      headers: cookieHeader ? { cookie: cookieHeader } : {},
-    });
-    if ((route === '/' || route === '/brief') && password) {
-      if (response.status !== 200) {
-        throw new Error(`${route} returned ${response.status}`);
-      }
-      const body = await response.text();
-      if (route === '/' && (!body.includes('Decision sprint') || !body.includes('Collaboration debt queue') || !body.includes('Operating memo') || !body.includes('Stakeholder comms studio') || !body.includes('Delegation board') || !body.includes('Collaborator memory') || !body.includes('Board portfolio') || !body.includes('Open brief view'))) {
-        throw new Error('Home page is up but missing expected collaboration features');
-      }
-      if (route === '/brief' && (!body.includes('Brief view') || !body.includes('Copy markdown brief') || !body.includes('What David should care about first'))) {
-        throw new Error('Brief page is up but missing expected briefing features');
-      }
-    } else if (response.status !== 200) {
-      throw new Error(`${route} returned ${response.status}`);
-    }
-    console.log(`ok ${route} -> ${response.status}`);
-  }
+  await verifyHttpRoutes(cookieHeader);
+  await verifyBrowserFlow();
 }
 
 main().catch((error) => {
