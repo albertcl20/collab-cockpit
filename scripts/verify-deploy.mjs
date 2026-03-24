@@ -51,7 +51,7 @@ async function main() {
         throw new Error(`${route} returned ${response.status}`);
       }
       const body = await response.text();
-      if (!body.includes('Decision sprint') || !body.includes('Collaboration debt queue') || !body.includes('Operating memo') || !body.includes('Delegation board') || !body.includes('Collaborator memory')) {
+      if (!body.includes('Decision sprint') || !body.includes('Collaboration debt queue') || !body.includes('Operating memo') || !body.includes('Delegation board') || !body.includes('Collaborator memory') || !body.includes('Board portfolio')) {
         throw new Error('Home page is up but missing expected collaboration features');
       }
     } else if (response.status !== 200) {

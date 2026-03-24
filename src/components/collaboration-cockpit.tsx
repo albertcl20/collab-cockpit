@@ -294,8 +294,33 @@ type AppState = {
   collaboratorProfiles: CollaboratorProfile[];
 };
 
-type BootPayload = {
+type PortfolioBoard = {
+  id: string;
+  name: string;
+  description: string;
+  updatedAt: string;
   state: AppState;
+};
+
+type PortfolioState = {
+  activeBoardId: string;
+  boards: PortfolioBoard[];
+};
+
+type PortfolioDigestItem = {
+  id: string;
+  name: string;
+  description: string;
+  workstreams: number;
+  health: number;
+  blocked: number;
+  stale: number;
+  topFocus: string;
+  updatedLabel: string;
+};
+
+type BootPayload = {
+  portfolio: PortfolioState;
   source: "default" | "local" | "share";
 };
 
@@ -605,8 +630,8 @@ type ConversationDigest = {
   createdWorkstream: Omit<Workstream, "id">;
 };
 
-const STORAGE_KEY = "collab-cockpit-v5";
-const LEGACY_KEYS = ["collab-cockpit-v4", "collab-cockpit-v3", "collab-cockpit-v2", "collab-cockpit-v1"];
+const STORAGE_KEY = "collab-cockpit-v6";
+const LEGACY_KEYS = ["collab-cockpit-v5", "collab-cockpit-v4", "collab-cockpit-v3", "collab-cockpit-v2", "collab-cockpit-v1"];
 
 const initialState: AppState = {
   workstreams: [
@@ -718,6 +743,19 @@ const initialState: AppState = {
   ],
 };
 
+const initialPortfolio: PortfolioState = {
+  activeBoardId: "board-main",
+  boards: [
+    {
+      id: "board-main",
+      name: "David + Albert",
+      description: "Main collaboration board for current priorities, blockers, and decisions.",
+      updatedAt: new Date().toISOString(),
+      state: initialState,
+    },
+  ],
+};
+
 const statusTone: Record<Status, string> = {
   active: "bg-emerald-50 text-emerald-700 border-emerald-200",
   watch: "bg-amber-50 text-amber-700 border-amber-200",
@@ -762,7 +800,9 @@ const commitmentTone: Record<CommitmentLane, string> = {
 
 export function CollaborationCockpit() {
   const bootPayload = getBootPayload();
-  const bootState = bootPayload.state;
+  const [portfolio, setPortfolio] = useState<PortfolioState>(bootPayload.portfolio);
+  const activeBoard = portfolio.boards.find((item) => item.id === portfolio.activeBoardId) ?? portfolio.boards[0];
+  const bootState = activeBoard?.state ?? initialState;
   const [state, setState] = useState<AppState>(bootState);
   const [selectedId, setSelectedId] = useState<string>(bootState.workstreams[0]?.id ?? "");
   const [isSharedView, setIsSharedView] = useState(bootPayload.source === "share");
@@ -770,6 +810,7 @@ export function CollaborationCockpit() {
   const [coachMode, setCoachMode] = useState<CoachMode>("quick-sync");
   const [focusMode, setFocusMode] = useState<FocusMode>("daily-sync");
   const [selectedCollaborator, setSelectedCollaborator] = useState("David");
+  const [newBoardName, setNewBoardName] = useState("");
   const [mergeSelection, setMergeSelection] = useState<{ primaryId: string; secondaryId: string }>({ primaryId: "", secondaryId: "" });
   const [snapshotNote, setSnapshotNote] = useState("");
   const [sessionDone, setSessionDone] = useState<Record<string, boolean>>({});
@@ -805,9 +846,25 @@ export function CollaborationCockpit() {
   const importRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    setPortfolio((current) => ({
+      ...current,
+      boards: current.boards.map((board) =>
+        board.id === current.activeBoardId
+          ? { ...board, state, updatedAt: new Date().toISOString() }
+          : board
+      ),
+    }));
+  }, [state]);
+
+  useEffect(() => {
     if (isSharedView) return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [isSharedView, state]);
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(portfolio));
+  }, [isSharedView, portfolio]);
+
+  useEffect(() => {
+    setState(activeBoard?.state ?? initialState);
+    setSelectedId((activeBoard?.state.workstreams[0]?.id) ?? "");
+  }, [activeBoard]);
 
   useEffect(() => {
     if (!copyState) return;
@@ -836,6 +893,7 @@ export function CollaborationCockpit() {
   );
   const overdueDecisions = state.decisions.filter((item) => isPast(item.deadline)).length;
   const collaborationHealth = collaborationHealthScore(scoredWorkstreams, state.decisions);
+  const portfolioDigest = useMemo(() => buildPortfolioDigest(portfolio), [portfolio]);
   const agenda = buildAgenda(scoredWorkstreams, state.decisions);
   const sevenDayPlan = buildSevenDayPlan(scoredWorkstreams, state.decisions);
   const insights = useMemo(() => buildInsights(scoredWorkstreams, state.decisions), [scoredWorkstreams, state.decisions]);
@@ -1033,6 +1091,73 @@ export function CollaborationCockpit() {
     if (collaboratorMap.briefs.some((item) => item.name === selectedCollaborator)) return;
     setSelectedCollaborator(collaboratorMap.briefs[0]?.name ?? "David");
   }, [collaboratorMap.briefs, selectedCollaborator]);
+
+  function switchBoard(boardId: string) {
+    if (boardId === portfolio.activeBoardId) return;
+    setPortfolio((current) => ({ ...current, activeBoardId: boardId }));
+    setIsSharedView(false);
+    clearSharedHash();
+  }
+
+  function updateBoardMeta(boardId: string, patch: Partial<Pick<PortfolioBoard, "name" | "description">>) {
+    setPortfolio((current) => ({
+      ...current,
+      boards: current.boards.map((board) =>
+        board.id === boardId ? { ...board, ...patch, updatedAt: new Date().toISOString() } : board
+      ),
+    }));
+  }
+
+  function addBoard() {
+    const label = newBoardName.trim() || `Board ${portfolio.boards.length + 1}`;
+    const boardId = cryptoId();
+    const nextBoard: PortfolioBoard = {
+      id: boardId,
+      name: label,
+      description: "A separate collaboration lane with its own workstreams, decisions, and memory.",
+      updatedAt: new Date().toISOString(),
+      state: normalizeAppState(structuredClone(initialState)),
+    };
+
+    setPortfolio((current) => ({
+      activeBoardId: boardId,
+      boards: [nextBoard, ...current.boards],
+    }));
+    setNewBoardName("");
+    setIsSharedView(false);
+    clearSharedHash();
+  }
+
+  function duplicateBoard(boardId: string) {
+    const source = portfolio.boards.find((board) => board.id === boardId);
+    if (!source) return;
+    const duplicatedId = cryptoId();
+    const duplicated: PortfolioBoard = {
+      id: duplicatedId,
+      name: `${source.name} copy`,
+      description: source.description,
+      updatedAt: new Date().toISOString(),
+      state: normalizeAppState(structuredClone(source.state)),
+    };
+
+    setPortfolio((current) => ({
+      activeBoardId: duplicatedId,
+      boards: [duplicated, ...current.boards],
+    }));
+    setIsSharedView(false);
+    clearSharedHash();
+  }
+
+  function deleteBoard(boardId: string) {
+    if (portfolio.boards.length <= 1) return;
+    const remaining = portfolio.boards.filter((board) => board.id !== boardId);
+    setPortfolio({
+      activeBoardId: remaining[0]?.id ?? portfolio.activeBoardId,
+      boards: remaining,
+    });
+    setIsSharedView(false);
+    clearSharedHash();
+  }
 
   function patchCollaboratorProfile(name: string, patch: Partial<CollaboratorProfile>) {
     setState((current) => {
@@ -1329,6 +1454,7 @@ export function CollaborationCockpit() {
     window.localStorage.removeItem(STORAGE_KEY);
     LEGACY_KEYS.forEach((key) => window.localStorage.removeItem(key));
     clearSharedHash();
+    setPortfolio(initialPortfolio);
     setState(initialState);
     setSelectedId(initialState.workstreams[0]?.id ?? "");
     setBriefMode("alignment-agenda");
@@ -1352,7 +1478,7 @@ export function CollaborationCockpit() {
   }
 
   function exportJson() {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(activeBoard, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -1368,15 +1494,25 @@ export function CollaborationCockpit() {
   }
 
   function restoreLocalBoard() {
-    const stored = getStoredState();
+    const stored = getStoredPortfolio();
     clearSharedHash();
-    setState(stored);
-    setSelectedId(stored.workstreams[0]?.id ?? "");
+    setPortfolio(stored);
     setIsSharedView(false);
   }
 
   function saveSharedBoardToLocal() {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const boardId = cryptoId();
+    const savedBoard: PortfolioBoard = {
+      id: boardId,
+      name: `Imported shared board ${todayIso()}`,
+      description: "Saved from a shared cockpit snapshot.",
+      updatedAt: new Date().toISOString(),
+      state,
+    };
+    setPortfolio((current) => ({
+      activeBoardId: boardId,
+      boards: [savedBoard, ...current.boards],
+    }));
     clearSharedHash();
     setIsSharedView(false);
     setCopyState("shared board saved locally");
@@ -1403,21 +1539,22 @@ export function CollaborationCockpit() {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const parsed = JSON.parse(String(reader.result)) as Partial<AppState>;
-        if (!Array.isArray(parsed.workstreams) || !Array.isArray(parsed.updates) || !Array.isArray(parsed.decisions)) {
+        const parsed = JSON.parse(String(reader.result)) as Partial<PortfolioBoard & AppState>;
+        const maybeState = Array.isArray(parsed.workstreams) ? parsed : parsed.state;
+        if (!maybeState || !Array.isArray(maybeState.workstreams) || !Array.isArray(maybeState.updates) || !Array.isArray(maybeState.decisions)) {
           throw new Error("bad shape");
         }
-        const nextState: AppState = {
-          workstreams: parsed.workstreams.map(normalizeWorkstream),
-          updates: parsed.updates,
-          decisions: parsed.decisions,
-          snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots : [],
-          collaboratorProfiles: Array.isArray(parsed.collaboratorProfiles)
-            ? parsed.collaboratorProfiles.map(normalizeCollaboratorProfile)
-            : initialState.collaboratorProfiles,
+        const nextBoard: PortfolioBoard = {
+          id: cryptoId(),
+          name: parsed.name?.trim() || `Imported board ${todayIso()}`,
+          description: parsed.description?.trim() || "Imported from JSON.",
+          updatedAt: new Date().toISOString(),
+          state: normalizeAppState(maybeState),
         };
-        setState(nextState);
-        setSelectedId(nextState.workstreams[0]?.id ?? "");
+        setPortfolio((current) => ({
+          activeBoardId: nextBoard.id,
+          boards: [nextBoard, ...current.boards],
+        }));
         setIsSharedView(false);
         clearSharedHash();
       } catch {
@@ -1461,6 +1598,80 @@ export function CollaborationCockpit() {
               <MetricCard label="Top focus" value={focusNow ? String(focusNow.score) : "—"} note={focusNow?.name ?? "No workstreams yet"} />
               <MetricCard label="Blocked items" value={String(blockedCount)} note={blockedCount ? "Needs a real unblock path" : "Board is clear"} />
               <MetricCard label="Decision pressure" value={String(overdueDecisions)} note={overdueDecisions ? `Overdue decisions · confidence ${avgConfidence}%` : `Nothing overdue · confidence ${avgConfidence}%`} />
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl space-y-2">
+                <span className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-violet-700">
+                  Board portfolio
+                </span>
+                <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Keep separate collaboration boards without losing the bigger picture.</h2>
+                <p className="text-sm leading-6 text-slate-600 sm:text-base">
+                  Split work by context — product, side projects, family ops, whatever — then still see which board is carrying the most drag.
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[420px]">
+                <MetricCard label="Boards" value={String(portfolioDigest.length)} note={activeBoard?.name ?? "No active board"} />
+                <MetricCard label="Best health" value={portfolioDigest.length ? `${Math.max(...portfolioDigest.map((item) => item.health))}%` : "—"} note={portfolioDigest.slice().sort((a, b) => b.health - a.health)[0]?.name ?? "No board yet"} />
+                <MetricCard label="Most blocked" value={portfolioDigest.length ? String(Math.max(...portfolioDigest.map((item) => item.blocked))) : "0"} note={portfolioDigest.slice().sort((a, b) => b.blocked - a.blocked)[0]?.name ?? "No blockers tracked"} />
+              </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+              <div className="space-y-3">
+                {portfolioDigest.map((board) => (
+                  <button
+                    key={board.id}
+                    type="button"
+                    onClick={() => switchBoard(board.id)}
+                    className={`w-full rounded-3xl border p-4 text-left transition ${board.id === portfolio.activeBoardId ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}
+                  >
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-base font-semibold text-slate-900">{board.name}</h3>
+                          {board.id === portfolio.activeBoardId ? <Badge tone="border-slate-900 bg-slate-900 text-white">active</Badge> : null}
+                        </div>
+                        <p className="mt-2 text-sm leading-6 text-slate-600">{board.description}</p>
+                        <p className="mt-2 text-xs text-slate-500">Top focus: {board.topFocus} · updated {board.updatedLabel}</p>
+                      </div>
+                      <div className="grid gap-2 text-xs text-slate-500 sm:grid-cols-2 xl:grid-cols-4">
+                        <MiniStat label="Health" value={`${board.health}%`} />
+                        <MiniStat label="Workstreams" value={String(board.workstreams)} />
+                        <MiniStat label="Blocked" value={String(board.blocked)} />
+                        <MiniStat label="Stale" value={String(board.stale)} />
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <Field label="Active board name">
+                  <input className={inputClass} value={activeBoard?.name ?? ""} onChange={(e) => activeBoard && updateBoardMeta(activeBoard.id, { name: e.target.value })} />
+                </Field>
+                <Field label="What this board is for">
+                  <textarea className={`${inputClass} min-h-28`} value={activeBoard?.description ?? ""} onChange={(e) => activeBoard && updateBoardMeta(activeBoard.id, { description: e.target.value })} />
+                </Field>
+                <Field label="Add a new board">
+                  <div className="flex gap-3">
+                    <input className={inputClass} value={newBoardName} onChange={(e) => setNewBoardName(e.target.value)} placeholder="AskCody central, family ops, side project..." />
+                    <button type="button" onClick={addBoard} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">Add</button>
+                  </div>
+                </Field>
+                <div className="flex flex-wrap gap-3">
+                  <button type="button" onClick={() => activeBoard && duplicateBoard(activeBoard.id)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                    Duplicate active board
+                  </button>
+                  <button type="button" onClick={() => activeBoard && deleteBoard(activeBoard.id)} disabled={portfolio.boards.length <= 1} className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50">
+                    Delete active board
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -6485,6 +6696,21 @@ function serializeState(state: AppState) {
   return compressToEncodedURIComponent(JSON.stringify(state));
 }
 
+function normalizePortfolioState(parsed: Partial<PortfolioState> | null | undefined) {
+  const boards = Array.isArray(parsed?.boards) && parsed?.boards.length
+    ? parsed.boards.map((board) => ({
+        id: board.id ?? cryptoId(),
+        name: board.name?.trim() || "Untitled board",
+        description: board.description ?? "",
+        updatedAt: board.updatedAt ?? new Date().toISOString(),
+        state: normalizeAppState(board.state),
+      }))
+    : initialPortfolio.boards;
+
+  const activeBoardId = boards.some((board) => board.id === parsed?.activeBoardId) ? parsed?.activeBoardId ?? boards[0].id : boards[0].id;
+  return { activeBoardId, boards } satisfies PortfolioState;
+}
+
 function parseSharedState() {
   if (typeof window === "undefined") return null;
 
@@ -6502,16 +6728,29 @@ function parseSharedState() {
   }
 }
 
-function getStoredState() {
-  if (typeof window === "undefined") return initialState;
+function getStoredPortfolio() {
+  if (typeof window === "undefined") return initialPortfolio;
 
   const stored = window.localStorage.getItem(STORAGE_KEY) ?? LEGACY_KEYS.map((key) => window.localStorage.getItem(key)).find(Boolean);
-  if (!stored) return initialState;
+  if (!stored) return initialPortfolio;
 
   try {
-    return normalizeAppState(JSON.parse(stored) as Partial<AppState>);
+    const parsed = JSON.parse(stored) as Partial<PortfolioState & AppState>;
+    if (Array.isArray(parsed.boards)) {
+      return normalizePortfolioState(parsed);
+    }
+    return {
+      activeBoardId: initialPortfolio.activeBoardId,
+      boards: [
+        {
+          ...initialPortfolio.boards[0],
+          updatedAt: new Date().toISOString(),
+          state: normalizeAppState(parsed),
+        },
+      ],
+    } satisfies PortfolioState;
   } catch {
-    return initialState;
+    return initialPortfolio;
   }
 }
 
@@ -6530,17 +6769,53 @@ function buildRelationshipBrief({ prepPack, profile }: { prepPack: CollaboratorP
   return { collaborator: prepPack.collaborator, completeness, headline, approach, avoid, nextAsk, followUp, copyBlock };
 }
 
+function buildPortfolioDigest(portfolio: PortfolioState) {
+  return portfolio.boards
+    .map((board) => {
+      const scored = scoreWorkstreams(board.state.workstreams);
+      return {
+        id: board.id,
+        name: board.name,
+        description: board.description,
+        workstreams: board.state.workstreams.length,
+        health: collaborationHealthScore(scored, board.state.decisions),
+        blocked: board.state.workstreams.filter((item) => item.status === "blocked").length,
+        stale: scored.filter((item) => item.ageDays >= 3).length,
+        topFocus: scored[0]?.name ?? "No workstreams yet",
+        updatedLabel: prettyDateTime(board.updatedAt),
+      } satisfies PortfolioDigestItem;
+    })
+    .sort((a, b) => {
+      if (b.blocked !== a.blocked) return b.blocked - a.blocked;
+      return a.health - b.health;
+    });
+}
+
 function getBootPayload(): BootPayload {
-  if (typeof window === "undefined") return { state: initialState, source: "default" };
+  if (typeof window === "undefined") return { portfolio: initialPortfolio, source: "default" };
 
   const shared = parseSharedState();
   if (shared) {
-    return { state: shared, source: "share" };
+    return {
+      portfolio: {
+        activeBoardId: "shared-board",
+        boards: [
+          {
+            id: "shared-board",
+            name: "Shared cockpit snapshot",
+            description: "Opened from a share link.",
+            updatedAt: new Date().toISOString(),
+            state: shared,
+          },
+        ],
+      },
+      source: "share",
+    };
   }
 
-  const stored = getStoredState();
-  const source = stored === initialState ? "default" : "local";
-  return { state: stored, source };
+  const stored = getStoredPortfolio();
+  const source = stored === initialPortfolio ? "default" : "local";
+  return { portfolio: stored, source };
 }
 
 const inputClass =
