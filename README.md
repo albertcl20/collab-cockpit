@@ -26,6 +26,7 @@ A lightweight collaboration cockpit for David and Albert.
 - Supports local JSON export/import so the board is easy to back up or move
 - Stores data locally in the browser for fast, private use
 - Supports shareable cockpit links that carry the exact board state for handoffs without needing JSON exports
+- Adds a clean `/brief` view for print-ready and shareable one-page collaboration summaries
 - Supports a simple password gate for deployed environments via `APP_PASSWORD`
 
 ## Local development

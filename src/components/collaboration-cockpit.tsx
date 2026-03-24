@@ -1558,6 +1558,22 @@ export function CollaborationCockpit() {
     await copyText(getShareUrl(), "share link");
   }
 
+  function getBriefUrl() {
+    const url = new URL(window.location.href);
+    url.pathname = "/brief";
+    url.hash = "";
+    url.search = `?state=${serializeState(state)}`;
+    return url.toString();
+  }
+
+  async function copyBriefLink() {
+    await copyText(getBriefUrl(), "brief link");
+  }
+
+  function openBriefView() {
+    window.open(getBriefUrl(), "_blank", "noopener,noreferrer");
+  }
+
   function triggerImport() {
     importRef.current?.click();
   }
@@ -2716,6 +2732,12 @@ export function CollaborationCockpit() {
                 </button>
                 <button type="button" onClick={copyShareLink} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
                   Copy share link
+                </button>
+                <button type="button" onClick={openBriefView} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                  Open brief view
+                </button>
+                <button type="button" onClick={copyBriefLink} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                  Copy brief link
                 </button>
                 <button type="button" onClick={() => copyText(JSON.stringify(state, null, 2), "JSON")} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
                   Copy JSON

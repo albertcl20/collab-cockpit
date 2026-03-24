@@ -41,18 +41,21 @@ async function main() {
     cookieHeader = setCookie.split(';')[0];
   }
 
-  const checks = ['/', '/login', '/api/health'];
+  const checks = ['/', '/login', '/api/health', '/brief'];
   for (const route of checks) {
     const response = await fetchWithCookies(`${baseUrl}${route}`, {
       headers: cookieHeader ? { cookie: cookieHeader } : {},
     });
-    if (route === '/' && password) {
+    if ((route === '/' || route === '/brief') && password) {
       if (response.status !== 200) {
         throw new Error(`${route} returned ${response.status}`);
       }
       const body = await response.text();
-      if (!body.includes('Decision sprint') || !body.includes('Collaboration debt queue') || !body.includes('Operating memo') || !body.includes('Stakeholder comms studio') || !body.includes('Delegation board') || !body.includes('Collaborator memory') || !body.includes('Board portfolio')) {
+      if (route === '/' && (!body.includes('Decision sprint') || !body.includes('Collaboration debt queue') || !body.includes('Operating memo') || !body.includes('Stakeholder comms studio') || !body.includes('Delegation board') || !body.includes('Collaborator memory') || !body.includes('Board portfolio') || !body.includes('Open brief view'))) {
         throw new Error('Home page is up but missing expected collaboration features');
+      }
+      if (route === '/brief' && (!body.includes('Brief view') || !body.includes('Copy markdown brief') || !body.includes('What David should care about first'))) {
+        throw new Error('Brief page is up but missing expected briefing features');
       }
     } else if (response.status !== 200) {
       throw new Error(`${route} returned ${response.status}`);
