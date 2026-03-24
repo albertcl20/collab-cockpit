@@ -361,6 +361,24 @@ type OperatingMemo = {
   copyBlock: string;
 };
 
+type StakeholderCommsAudience = "david" | "leadership" | "teammate" | "dependent-owner" | "support";
+
+type StakeholderCommsPack = {
+  audience: StakeholderCommsAudience;
+  label: string;
+  channel: string;
+  targetName: string;
+  headline: string;
+  whyThisAudience: string;
+  subject: string;
+  message: string;
+  bullets: string[];
+  likelyQuestions: string[];
+  exactAsk: string;
+  keepOut: string;
+  copyBlock: string;
+};
+
 type DelegationLane = "david" | "albert" | "shared" | "external";
 
 type DelegationItem = {
@@ -810,6 +828,7 @@ export function CollaborationCockpit() {
   const [coachMode, setCoachMode] = useState<CoachMode>("quick-sync");
   const [focusMode, setFocusMode] = useState<FocusMode>("daily-sync");
   const [selectedCollaborator, setSelectedCollaborator] = useState("David");
+  const [selectedAudience, setSelectedAudience] = useState<StakeholderCommsAudience>("leadership");
   const [newBoardName, setNewBoardName] = useState("");
   const [mergeSelection, setMergeSelection] = useState<{ primaryId: string; secondaryId: string }>({ primaryId: "", secondaryId: "" });
   const [snapshotNote, setSnapshotNote] = useState("");
@@ -962,6 +981,17 @@ export function CollaborationCockpit() {
   const operatingMemo = useMemo(
     () => buildOperatingMemo({ workstreams: scoredWorkstreams, decisions: state.decisions, updates: state.updates, nudges: nudgeQueue.items, agenda }),
     [scoredWorkstreams, state.decisions, state.updates, nudgeQueue.items, agenda]
+  );
+  const stakeholderCommsPack = useMemo(
+    () => buildStakeholderCommsPack({
+      audience: selectedAudience,
+      workstreams: scoredWorkstreams,
+      decisions: state.decisions,
+      updates: state.updates,
+      collaboratorMap,
+      operatingMemo,
+    }),
+    [selectedAudience, scoredWorkstreams, state.decisions, state.updates, collaboratorMap, operatingMemo]
   );
   const delegationBoard = useMemo(
     () => buildDelegationBoard({ workstreams: scoredWorkstreams, decisions: state.decisions }),
@@ -2136,6 +2166,80 @@ export function CollaborationCockpit() {
                         {item}
                       </div>
                     ))}
+                  </div>
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="Stakeholder comms studio" subtitle="Translates the same board into the right message for the right audience, so collaboration does not die between insight and communication.">
+              <div className="grid gap-4">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <MetricCard label="Audience" value={stakeholderCommsPack.label} note={stakeholderCommsPack.whyThisAudience} />
+                  <MetricCard label="Channel" value={stakeholderCommsPack.channel} note={`Target: ${stakeholderCommsPack.targetName}`} />
+                  <MetricCard label="Talking points" value={String(stakeholderCommsPack.bullets.length)} note={stakeholderCommsPack.headline} />
+                  <MetricCard label="Likely questions" value={String(stakeholderCommsPack.likelyQuestions.length)} note={stakeholderCommsPack.exactAsk} />
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="max-w-3xl">
+                      <h3 className="text-base font-semibold text-slate-900">Audience-tailored update</h3>
+                      <p className="mt-1 text-sm leading-6 text-slate-600">{stakeholderCommsPack.headline}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <select className={inputClass} value={selectedAudience} onChange={(e) => setSelectedAudience(e.target.value as StakeholderCommsAudience)}>
+                        <option value="david">David</option>
+                        <option value="leadership">Leadership</option>
+                        <option value="teammate">Teammate</option>
+                        <option value="dependent-owner">Dependency owner</option>
+                        <option value="support">Support</option>
+                      </select>
+                      <button type="button" onClick={() => copyText(stakeholderCommsPack.copyBlock, `${stakeholderCommsPack.label} comms pack`)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                        Copy comms pack
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 xl:grid-cols-[1.35fr_0.65fr]">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-base font-semibold text-slate-900">{stakeholderCommsPack.channel} draft</h3>
+                      <Badge>{stakeholderCommsPack.label}</Badge>
+                    </div>
+                    <p className="mt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Subject / opener</p>
+                    <p className="mt-2 text-sm font-medium text-slate-900">{stakeholderCommsPack.subject}</p>
+                    <textarea readOnly className={`${inputClass} mt-4 min-h-64 bg-slate-50 font-mono text-sm`} value={stakeholderCommsPack.message} />
+                  </div>
+
+                  <div className="grid gap-3">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <h3 className="text-base font-semibold text-slate-900">Talking points</h3>
+                      <div className="mt-3 grid gap-2">
+                        {stakeholderCommsPack.bullets.map((item) => (
+                          <div key={item} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">{item}</div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <h3 className="text-base font-semibold text-slate-900">Likely questions</h3>
+                      <div className="mt-3 grid gap-2">
+                        {stakeholderCommsPack.likelyQuestions.map((item) => (
+                          <div key={item} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">{item}</div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 xl:grid-cols-2">
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
+                    <p className="font-semibold">Exact ask</p>
+                    <p className="mt-2">{stakeholderCommsPack.exactAsk}</p>
+                  </div>
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+                    <p className="font-semibold">Leave out</p>
+                    <p className="mt-2">{stakeholderCommsPack.keepOut}</p>
                   </div>
                 </div>
               </div>
@@ -5188,6 +5292,172 @@ function buildDelegationBoard({
     albert: albert.slice(0, 4),
     shared: shared.slice(0, 4),
     external: external.slice(0, 4),
+    copyBlock,
+  };
+}
+
+function buildStakeholderCommsPack({
+  audience,
+  workstreams,
+  decisions,
+  updates,
+  collaboratorMap,
+  operatingMemo,
+}: {
+  audience: StakeholderCommsAudience;
+  workstreams: ScoredWorkstream[];
+  decisions: Decision[];
+  updates: Update[];
+  collaboratorMap: CollaboratorMap;
+  operatingMemo: OperatingMemo;
+}): StakeholderCommsPack {
+  const topWorkstream = workstreams[0];
+  const blockedWorkstream = workstreams.find((item) => item.status === "blocked" || item.blocker.trim());
+  const staleWorkstream = workstreams.find((item) => item.ageDays >= 5);
+  const topDecision = [...decisions].sort((left, right) => {
+    const leftDeadline = left.deadline ? new Date(left.deadline).getTime() : Number.MAX_SAFE_INTEGER;
+    const rightDeadline = right.deadline ? new Date(right.deadline).getTime() : Number.MAX_SAFE_INTEGER;
+    if (leftDeadline !== rightDeadline) return leftDeadline - rightDeadline;
+    return left.confidence - right.confidence;
+  })[0];
+  const recentUpdate = [...updates].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0];
+  const dependencyOwner = collaboratorMap.briefs.find((item) => item.name !== "David" && item.waitingCount > 0) ?? collaboratorMap.briefs.find((item) => item.name !== "David") ?? collaboratorMap.briefs[0];
+  const targetName = audience === "dependent-owner"
+    ? dependencyOwner?.name || "dependency owner"
+    : audience === "david"
+      ? "David"
+      : audience === "leadership"
+        ? "Leadership"
+        : audience === "teammate"
+          ? topWorkstream?.owner || "Delivery teammate"
+          : "Support";
+
+  const focusLine = topWorkstream
+    ? `${topWorkstream.name} is still the highest-leverage thread right now.`
+    : "The board needs a clearly named focus before any update will land cleanly.";
+  const blockerLine = blockedWorkstream
+    ? `${blockedWorkstream.name} is the main drag right now because ${blockedWorkstream.blocker || blockedWorkstream.waitingOn || "it still lacks a clean owner and exit path"}.`
+    : "No hard blocker is screaming right now, so the main risk is drift rather than collapse.";
+  const decisionLine = topDecision
+    ? `${topDecision.topic} still needs a call${topDecision.deadline ? ` by ${prettyDate(topDecision.deadline)}` : ""}.`
+    : "There is no urgent decision logged right now, which is either calm or suspicious under-documentation.";
+  const updateLine = recentUpdate
+    ? `Latest signal: ${recentUpdate.title} — ${recentUpdate.detail}`
+    : "No recent update logged, so any outbound message should acknowledge that the board needs fresher inputs.";
+  const staleLine = staleWorkstream
+    ? `${staleWorkstream.name} has gone ${staleWorkstream.ageDays} days without a touch and could quietly become tomorrow's blocker.`
+    : "Freshness is acceptable enough that the next message can focus on execution instead of apologizing for silence.";
+
+  const baseBullets = [focusLine, blockerLine, decisionLine];
+  const likelyQuestions = [
+    topWorkstream ? `What happens next on ${topWorkstream.name}, and who owns that move?` : "What is the actual top priority?",
+    blockedWorkstream ? `What specifically unblocks ${blockedWorkstream.name}, and by when?` : "Where is silent drift most likely to show up next?",
+    topDecision ? `What recommendation are we making on ${topDecision.topic}?` : "Is there an unlogged decision hiding inside this update?",
+  ];
+
+  let label = "Leadership";
+  let channel = "Slack / email";
+  let whyThisAudience = "Good when the board needs air cover, priority clarity, or risk framing beyond the working team.";
+  let subject = `Quick read: ${topWorkstream?.name || "collaboration status"}`;
+  let message = [operatingMemo.headline, focusLine, blockerLine, decisionLine, `Ask: ${operatingMemo.stakeholderPing}`].join("\n\n");
+  let exactAsk = operatingMemo.stakeholderPing;
+  let keepOut = "Avoid dumping raw board mechanics, every update, or unresolved side quests that do not change the audience's decision.";
+
+  if (audience === "david") {
+    label = "David";
+    channel = "Telegram / in-person";
+    whyThisAudience = "Best when David needs the shortest possible operating read, not another dashboard tour.";
+    subject = `Today's sharpest move: ${topWorkstream?.name || "clean up the board"}`;
+    message = [
+      `Today's collaboration read: ${operatingMemo.headline}`,
+      `Focus: ${operatingMemo.davidNow}`,
+      `Albert: ${operatingMemo.albertNow}`,
+      `Watchout: ${blockedWorkstream ? blockedWorkstream.blocker || blockedWorkstream.waitingOn : staleLine}`,
+      `Exact ask: ${topDecision ? `Choose a path on ${topDecision.topic}.` : operatingMemo.next24Hours[0] || "Confirm the top thread and cut one thing."}`,
+    ].join("\n\n");
+    exactAsk = topDecision ? `Make the call on ${topDecision.topic}${topDecision.deadline ? ` by ${prettyDate(topDecision.deadline)}` : " this cycle"}.` : operatingMemo.davidNow;
+    keepOut = "Do not paste a full status novel. David needs the decision, the risk, and the next move in under a minute.";
+  } else if (audience === "teammate") {
+    label = "Teammate";
+    channel = "Slack / chat";
+    whyThisAudience = "Use when someone doing the actual work needs clarity, not executive theater.";
+    subject = `${topWorkstream?.name || "Current thread"}: next move`;
+    message = [
+      `Quick sync on ${topWorkstream?.name || "the current thread"}.`,
+      focusLine,
+      blockedWorkstream ? `The main thing slowing us down is ${blockedWorkstream.name}: ${blockedWorkstream.blocker || blockedWorkstream.waitingOn}.` : staleLine,
+      topDecision ? `Decision to keep in view: ${topDecision.topic}. Current recommendation: ${topDecision.recommendation || "Need a tighter recommendation."}` : updateLine,
+      `Could you take: ${topWorkstream?.nextStep || operatingMemo.albertNow}`,
+    ].join("\n\n");
+    exactAsk = topWorkstream?.nextStep || operatingMemo.albertNow;
+    keepOut = "Skip broad strategy backstory unless it changes their work today.";
+  } else if (audience === "dependent-owner") {
+    label = "Dependency owner";
+    channel = "Slack / email";
+    whyThisAudience = "Use when progress is trapped behind another person's reply, approval, or missing input.";
+    subject = `Need one unblock on ${blockedWorkstream?.name || topWorkstream?.name || "current work"}`;
+    message = [
+      `Need one unblock so ${blockedWorkstream?.name || topWorkstream?.name || "this work"} keeps moving.`,
+      dependencyOwner ? `${dependencyOwner.name} is the clearest dependency owner from the board right now.` : "The board shows a dependency, but not a crisply named owner yet.",
+      blockerLine,
+      topDecision ? `If easier, we can close it by making the call on ${topDecision.topic}.` : updateLine,
+      `Exact unblock request: ${dependencyOwner?.ask || operatingMemo.stakeholderPing}`,
+    ].join("\n\n");
+    exactAsk = dependencyOwner?.ask || operatingMemo.stakeholderPing;
+    keepOut = "Do not send a vague nudge. Ask for one specific artifact, answer, or decision with a time bound.";
+    likelyQuestions[0] = dependencyOwner ? `What do you need from ${dependencyOwner.name} exactly?` : likelyQuestions[0];
+  } else if (audience === "support") {
+    label = "Support";
+    channel = "Slack / ticket note";
+    whyThisAudience = "Useful when support needs product context, expectation setting, or a customer-safe update.";
+    subject = `Customer-facing read on ${topWorkstream?.name || "the active issue"}`;
+    message = [
+      `Support-safe readout for ${topWorkstream?.name || "the active issue"}.`,
+      focusLine,
+      blockedWorkstream ? `Current risk: ${blockedWorkstream.blocker || blockedWorkstream.waitingOn}.` : "Current risk is mainly timeline drift, not a known hard stop.",
+      topDecision ? `Internal decision still open: ${topDecision.topic}. Until then, avoid implying final scope or dates.` : staleLine,
+      `Suggested support line: ${recentUpdate?.detail || operatingMemo.stakeholderPing}`,
+    ].join("\n\n");
+    exactAsk = "Align on one customer-safe status line and one internal escalation path before replying broadly.";
+    keepOut = "Do not promise dates, root causes, or fixes the board cannot support yet.";
+  }
+
+  const bullets = baseBullets.concat([
+    audience === "leadership" ? staleLine : updateLine,
+    `Exact ask: ${exactAsk}`,
+  ]);
+
+  const copyBlock = [
+    `Audience: ${label}`,
+    `Channel: ${channel}`,
+    `Target: ${targetName}`,
+    `Subject: ${subject}`,
+    "",
+    message,
+    "",
+    "Talking points",
+    ...bullets.map((item, index) => `${index + 1}. ${item}`),
+    "",
+    "Likely questions",
+    ...likelyQuestions.map((item, index) => `${index + 1}. ${item}`),
+    "",
+    `Exact ask: ${exactAsk}`,
+    `Leave out: ${keepOut}`,
+  ].join("\n");
+
+  return {
+    audience,
+    label,
+    channel,
+    targetName,
+    headline: `${label} version keeps the same board but changes the framing, level of detail, and ask so the update actually lands.`,
+    whyThisAudience,
+    subject,
+    message,
+    bullets,
+    likelyQuestions,
+    exactAsk,
+    keepOut,
     copyBlock,
   };
 }

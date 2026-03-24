@@ -18,6 +18,7 @@ A lightweight collaboration cockpit for David and Albert.
 - Adds a commitment pulse that tracks which promises are due now, which are drifting this week, and what exact follow-up to send before execution silently slips
 - Adds a collaboration debt queue that ranks the most expensive blockers, dependencies, decision gaps, vague handoffs, and overlap so the team knows what to clean up first
 - Adds a collaboration retro that identifies recurring system failure patterns and proposes 2-week process fixes worth testing
+- Adds a stakeholder comms studio that tailors the same board into sharper updates for David, leadership, teammates, dependency owners, or support
 - Adds a what-if simulator that compares likely interventions before David and Albert spend real time on them
 - Builds a concrete 7-day collaboration plan from the current board state
 - Tracks decisions, recent updates, blockers, and explicit asks in one place
